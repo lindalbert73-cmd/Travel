@@ -11,11 +11,14 @@ import SuppliersPage from './features/suppliers/SuppliersPage'
 import SupplierDetailPage from './features/suppliers/SupplierDetailPage'
 import CustomersReceivablePage from './features/customers/CustomersReceivablePage'
 import CustomersPayablePage from './features/customers/CustomersPayablePage'
+import { supabase } from './supabaseClient'
 import { getTodayISO, formatDisplayDate, withinLastDays } from './utils/dates'
 import { formatMoney } from './utils/money'
 import { STORAGE_KEYS } from './config/storageKeys'
 import { loadAuthConfig, saveAuthConfig } from './utils/authConfig'
 
+
+const STATIC_USER_ID = '00000000-0000-0000-0000-000000000001'
 
 const COMMON_PRODUCTS = [
   'Ticket Flight',
@@ -195,6 +198,401 @@ function App() {
       console.error('Failed to load state', e)
     }
   }, [])
+
+  // sync sales with Supabase (cloud) on startup
+  useEffect(() => {
+    async function syncSalesWithSupabase() {
+      try {
+        const { data, error } = await supabase
+          .from('sales')
+          .select('*')
+          .eq('user_id', STATIC_USER_ID)
+          .order('created_at', { ascending: false })
+
+        if (error) {
+          console.error('Error loading sales from Supabase', error)
+          return
+        }
+
+        if (data && data.length > 0) {
+          const mapped = data.map((row) => ({
+            id: row.id,
+            invoiceNo: row.invoice_no || '',
+            customerNo: row.customer_no || '',
+            date: row.date || '',
+            customerName: row.customer_name || '',
+            product: row.product || '',
+            note: row.note || '',
+            total: String(row.total_amount ?? ''),
+            cash: String(row.cash ?? ''),
+            unpaid: String(row.outstanding ?? ''),
+          }))
+          setSales(mapped)
+          return
+        }
+
+        // Wenn Supabase noch leer ist, aber localStorage Daten hat → einmalig rüberkopieren
+        const localRaw = window.localStorage.getItem(STORAGE_KEYS.sales)
+        if (!localRaw) return
+
+        const localSales = JSON.parse(localRaw)
+        if (!Array.isArray(localSales) || localSales.length === 0) return
+
+        const rows = localSales.map((s) => ({
+          user_id: STATIC_USER_ID,
+          invoice_no: s.invoiceNo ?? '',
+          customer_no: s.customerNo ?? '',
+          date: s.date || null,
+          customer_name: s.customerName ?? '',
+          product: s.product ?? '',
+          note: s.note ?? '',
+          total_amount: Number(s.total) || 0,
+          cash: Number(s.cash) || 0,
+          outstanding: Number(s.unpaid) || 0,
+        }))
+
+        const { data: inserted, error: insertError } = await supabase
+          .from('sales')
+          .insert(rows)
+          .select()
+
+        if (insertError) {
+          console.error('Error seeding Supabase sales from localStorage', insertError)
+          return
+        }
+
+        const mappedInserted = inserted.map((row) => ({
+          id: row.id,
+          invoiceNo: row.invoice_no || '',
+          customerNo: row.customer_no || '',
+          date: row.date || '',
+          customerName: row.customer_name || '',
+          product: row.product || '',
+          note: row.note || '',
+          total: String(row.total_amount ?? ''),
+          cash: String(row.cash ?? ''),
+          unpaid: String(row.outstanding ?? ''),
+        }))
+        setSales(mappedInserted)
+      } catch (e) {
+        console.error('Failed to sync sales with Supabase', e)
+      }
+    }
+
+    syncSalesWithSupabase()
+  }, [])
+
+  // sync refunds with Supabase (cloud) on startup
+  useEffect(() => {
+    async function syncRefundsWithSupabase() {
+      try {
+        const { data, error } = await supabase
+          .from('refunds')
+          .select('*')
+          .eq('user_id', STATIC_USER_ID)
+          .order('created_at', { ascending: false })
+
+        if (error) {
+          console.error('Error loading refunds from Supabase', error)
+          return
+        }
+
+        if (data && data.length > 0) {
+          const mapped = data.map((row) => ({
+            id: row.id,
+            invoiceNo: row.invoice_no || '',
+            customerNo: row.customer_no || '',
+            date: row.date || '',
+            customerName: row.customer_name || '',
+            product: row.product || '',
+            note: row.note || '',
+            total: Number(row.total_amount ?? 0),
+            cash: Number(row.cash ?? 0),
+            unpaid: Number(row.unpaid ?? 0),
+          }))
+          setRefunds(mapped)
+          return
+        }
+
+        const localRaw = window.localStorage.getItem(STORAGE_KEYS.refunds)
+        if (!localRaw) return
+
+        const localRefunds = JSON.parse(localRaw)
+        if (!Array.isArray(localRefunds) || localRefunds.length === 0) return
+
+        const rows = localRefunds.map((r) => ({
+          user_id: STATIC_USER_ID,
+          invoice_no: r.invoiceNo ?? '',
+          customer_no: r.customerNo ?? '',
+          date: r.date || null,
+          customer_name: r.customerName ?? '',
+          product: r.product ?? '',
+          note: r.note ?? '',
+          total_amount: Number(r.total) || 0,
+          cash: Number(r.cash) || 0,
+          unpaid: Number(r.unpaid) || 0,
+        }))
+
+        const { data: inserted, error: insertError } = await supabase
+          .from('refunds')
+          .insert(rows)
+          .select()
+
+        if (insertError) {
+          console.error('Error seeding Supabase refunds from localStorage', insertError)
+          return
+        }
+
+        const mappedInserted = inserted.map((row) => ({
+          id: row.id,
+          invoiceNo: row.invoice_no || '',
+          customerNo: row.customer_no || '',
+          date: row.date || '',
+          customerName: row.customer_name || '',
+          product: row.product || '',
+          note: row.note || '',
+          total: Number(row.total_amount ?? 0),
+          cash: Number(row.cash ?? 0),
+          unpaid: Number(row.unpaid ?? 0),
+        }))
+        setRefunds(mappedInserted)
+      } catch (e) {
+        console.error('Failed to sync refunds with Supabase', e)
+      }
+    }
+
+    syncRefundsWithSupabase()
+  }, [])
+
+  // sync expenses with Supabase (cloud) on startup
+  useEffect(() => {
+    async function syncExpensesWithSupabase() {
+      try {
+        const { data, error } = await supabase
+          .from('expenses')
+          .select('*')
+          .eq('user_id', STATIC_USER_ID)
+          .order('date', { ascending: false })
+
+        if (error) {
+          console.error('Error loading expenses from Supabase', error)
+          return
+        }
+
+        if (data && data.length > 0) {
+          const mapped = data.map((row) => ({
+            id: row.id,
+            date: row.date || '',
+            description: row.description || '',
+            note: row.note || '',
+            cash: Number(row.cash ?? 0),
+          }))
+          setExpenses(mapped)
+          return
+        }
+
+        const localRaw = window.localStorage.getItem(STORAGE_KEYS.expenses)
+        if (!localRaw) return
+
+        const localExpenses = JSON.parse(localRaw)
+        if (!Array.isArray(localExpenses) || localExpenses.length === 0) return
+
+        const rows = localExpenses.map((e) => ({
+          user_id: STATIC_USER_ID,
+          date: e.date || null,
+          description: e.description ?? '',
+          note: e.note ?? '',
+          cash: Number(e.cash) || 0,
+        }))
+
+        const { data: inserted, error: insertError } = await supabase
+          .from('expenses')
+          .insert(rows)
+          .select()
+
+        if (insertError) {
+          console.error('Error seeding Supabase expenses from localStorage', insertError)
+          return
+        }
+
+        const mappedInserted = inserted.map((row) => ({
+          id: row.id,
+          date: row.date || '',
+          description: row.description || '',
+          note: row.note || '',
+          cash: Number(row.cash ?? 0),
+        }))
+        setExpenses(mappedInserted)
+      } catch (e) {
+        console.error('Failed to sync expenses with Supabase', e)
+      }
+    }
+
+    syncExpensesWithSupabase()
+  }, [])
+
+
+  // sync suppliers and supplier orders with Supabase (cloud) on startup
+  useEffect(() => {
+    async function syncSuppliersAndOrders() {
+      try {
+        const [{ data: supData, error: supError }, { data: orderData, error: orderError }] =
+          await Promise.all([
+            supabase
+              .from('suppliers')
+              .select('*')
+              .eq('user_id', STATIC_USER_ID)
+              .order('created_at', { ascending: true }),
+            supabase
+              .from('order')
+              .select('*')
+              .eq('user_id', STATIC_USER_ID)
+              .order('date', { ascending: true }),
+          ])
+
+        if (supError) {
+          console.error('Error loading suppliers from Supabase', supError)
+        }
+        if (orderError) {
+          console.error('Error loading supplier orders from Supabase', orderError)
+        }
+
+        const suppliersRows = supData || []
+        const ordersRows = orderData || []
+
+        if (suppliersRows.length > 0 || ordersRows.length > 0) {
+          const mappedSuppliers = suppliersRows.map((row) => ({
+            id: row.id,
+            name: row.supplier_name || '',
+            note: row.note || '',
+            debit: Number(row.debit ?? 0),
+            credit: Number(row.credit ?? 0),
+          }))
+
+          const mappedOrders = ordersRows.map((row) => ({
+            id: row.id,
+            supplierId: row.supplier_id,
+            date: row.date || '',
+            customerName: row.customer_name || '',
+            product: row.product || '',
+            transactionType: row.transaction_type || 'invoice',
+            amountCredit: Number(row.amount_credit ?? 0),
+            amountDebit: Number(row.amount_debit ?? 0),
+          }))
+
+          setSuppliers(mappedSuppliers)
+          setSupplierOrders(mappedOrders)
+          return
+        }
+
+        // Supabase ist leer → versuchen, lokale Daten einmalig zu übernehmen
+        const localSupRaw = window.localStorage.getItem(STORAGE_KEYS.suppliers)
+        const localOrdersRaw = window.localStorage.getItem(STORAGE_KEYS.supplierOrders)
+
+        if (!localSupRaw && !localOrdersRaw) {
+          return
+        }
+
+        const localSuppliers = localSupRaw ? JSON.parse(localSupRaw) : []
+        const localOrders = localOrdersRaw ? JSON.parse(localOrdersRaw) : []
+
+        if (!Array.isArray(localSuppliers) || localSuppliers.length === 0) {
+          return
+        }
+
+        // zuerst Suppliers einfügen
+        const supplierInsertRows = localSuppliers.map((s) => ({
+          user_id: STATIC_USER_ID,
+          supplier_name: s.name ?? '',
+          note: s.note ?? '',
+          debit: Number(s.debit) || 0,
+          credit: Number(s.credit) || 0,
+        }))
+
+        const { data: insertedSuppliers, error: insertSupError } = await supabase
+          .from('suppliers')
+          .insert(supplierInsertRows)
+          .select()
+
+        if (insertSupError) {
+          console.error('Error seeding Supabase suppliers from localStorage', insertSupError)
+          return
+        }
+
+        const idMap = new Map()
+        localSuppliers.forEach((s, idx) => {
+          const row = insertedSuppliers[idx]
+          if (row && s.id != null) {
+            idMap.set(s.id, row.id)
+          }
+        })
+
+        let insertedOrders = []
+        if (Array.isArray(localOrders) && localOrders.length > 0 && idMap.size > 0) {
+          const orderInsertRows = localOrders
+            .map((o) => {
+              const supplier_id = idMap.get(o.supplierId)
+              if (!supplier_id) return null
+              return {
+                user_id: STATIC_USER_ID,
+                supplier_id,
+                date: o.date || null,
+                customer_name: o.customerName ?? '',
+                product: o.product ?? '',
+                transaction_type: o.transactionType ?? 'invoice',
+                amount_credit: Number(o.amountCredit) || 0,
+                amount_debit: Number(o.amountDebit) || 0,
+              }
+            })
+            .filter(Boolean)
+
+          if (orderInsertRows.length > 0) {
+            const { data: inserted, error: insertOrderError } = await supabase
+              .from('order')
+              .insert(orderInsertRows)
+              .select()
+
+            if (insertOrderError) {
+              console.error(
+                'Error seeding Supabase supplier orders from localStorage',
+                insertOrderError,
+              )
+            } else {
+              insertedOrders = inserted
+            }
+          }
+        }
+
+        const mappedSuppliersSeeded = insertedSuppliers.map((row) => ({
+          id: row.id,
+          name: row.supplier_name || '',
+          note: row.note || '',
+          debit: Number(row.debit ?? 0),
+          credit: Number(row.credit ?? 0),
+        }))
+
+        const mappedOrdersSeeded = insertedOrders.map((row) => ({
+          id: row.id,
+          supplierId: row.supplier_id,
+          date: row.date || '',
+          customerName: row.customer_name || '',
+          product: row.product || '',
+          transactionType: row.transaction_type || 'invoice',
+          amountCredit: Number(row.amount_credit ?? 0),
+          amountDebit: Number(row.amount_debit ?? 0),
+        }))
+
+        setSuppliers(mappedSuppliersSeeded)
+        setSupplierOrders(mappedOrdersSeeded)
+      } catch (e) {
+        console.error('Failed to sync suppliers/orders with Supabase', e)
+      }
+    }
+
+    syncSuppliersAndOrders()
+  }, [])
+
+
 
   // persist
   useEffect(() => {
@@ -433,7 +831,7 @@ function App() {
   }
 
   // submit handlers
-  function handleSalesSubmit(e) {
+  async function handleSalesSubmit(e) {
     e.preventDefault()
     const { invoiceNo, customerNo, date, customerName, product, total, cash, unpaid, note } =
       salesForm
@@ -455,69 +853,137 @@ function App() {
       note: note ? note.trim() : '',
     }
 
-    if (editingSale) {
-      // update existing + track changes
-      const oldSale = editingSale
-      const updatedSale = { ...oldSale, ...saleData }
-
-      const fieldsToTrack = ['date', 'customerName', 'product', 'total', 'cash', 'unpaid', 'note']
-      const changes = []
-
-      fieldsToTrack.forEach((field) => {
-        const oldValue = oldSale[field]
-        const newValue = updatedSale[field]
-        if (String(oldValue ?? '') !== String(newValue ?? '')) {
-          changes.push({ field, oldValue, newValue })
+    try {
+      if (editingSale) {
+        // UPDATE in Supabase
+        const payload = {
+          user_id: STATIC_USER_ID,
+          invoice_no: saleData.invoiceNo,
+          customer_no: saleData.customerNo,
+          date: saleData.date,
+          customer_name: saleData.customerName,
+          product: saleData.product,
+          note: saleData.note,
+          total_amount: saleData.total,
+          cash: saleData.cash,
+          outstanding: saleData.unpaid,
         }
-      })
 
-      if (changes.length) {
-        setChangeLog((prev) => {
-          const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
-          return [
-            ...prev,
-            {
-              id: nextId,
-              entityType: 'sale',
-              entityId: oldSale.id,
-              invoiceNo: oldSale.invoiceNo,
-              changedAt: new Date().toISOString(),
-              changes,
-            },
-          ]
+        const { error } = await supabase
+          .from('sales')
+          .update(payload)
+          .eq('id', editingSale.id)
+          .eq('user_id', STATIC_USER_ID)
+
+        if (error) {
+          console.error('Fehler beim Aktualisieren der Sale in Supabase', error)
+          alert('Fehler beim Speichern der Änderung (Supabase). Details in der Konsole.')
+          return
+        }
+
+        // Change-Log behalten
+        const oldSale = editingSale
+        const updatedSale = { ...oldSale, ...saleData }
+
+        const fieldsToTrack = ['date', 'customerName', 'product', 'total', 'cash', 'unpaid', 'note']
+        const changes = []
+
+        fieldsToTrack.forEach((field) => {
+          const oldValue = oldSale[field]
+          const newValue = updatedSale[field]
+          if (String(oldValue ?? '') !== String(newValue ?? '')) {
+            changes.push({ field, oldValue, newValue })
+          }
         })
+
+        if (changes.length) {
+          setChangeLog((prev) => {
+            const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
+            return [
+              ...prev,
+              {
+                id: nextId,
+                entityType: 'sale',
+                entityId: oldSale.id,
+                invoiceNo: oldSale.invoiceNo,
+                changedAt: new Date().toISOString(),
+                changes,
+              },
+            ]
+          })
+        }
+
+        setSales((prev) => prev.map((s) => (s.id === editingSale.id ? { ...s, ...saleData } : s)))
+        setEditingSale(null)
+        return
       }
 
-      setSales((prev) => prev.map((s) => (s.id === editingSale.id ? { ...s, ...saleData } : s)))
-      setEditingSale(null)
-      return
+      // NEUE Sale in Supabase
+      const payload = {
+        user_id: STATIC_USER_ID,
+        invoice_no: saleData.invoiceNo,
+        customer_no: saleData.customerNo,
+        date: saleData.date,
+        customer_name: saleData.customerName,
+        product: saleData.product,
+        note: saleData.note,
+        total_amount: saleData.total,
+        cash: saleData.cash,
+        outstanding: saleData.unpaid,
+      }
+
+      const { data, error } = await supabase
+        .from('sales')
+        .insert(payload)
+        .select()
+        .single()
+
+      if (error) {
+        console.error('Fehler beim Speichern der Sale in Supabase', error)
+        alert('Fehler beim Speichern. Details in der Konsole.')
+        return
+      }
+
+      const newSale = {
+        id: data.id,
+        invoiceNo: data.invoice_no || '',
+        customerNo: data.customer_no || '',
+        date: data.date || '',
+        customerName: data.customer_name || '',
+        product: data.product || '',
+        note: data.note || '',
+        total: String(data.total_amount ?? ''),
+        cash: String(data.cash ?? ''),
+        unpaid: String(data.outstanding ?? ''),
+      }
+
+      setSales((prev) => [...prev, newSale])
+
+      const newNextInvoice = nextInvoiceNumber + 1
+      const newNextCustomer = nextCustomerNumber + 1
+      setNextInvoiceNumber(newNextInvoice)
+      setNextCustomerNumber(newNextCustomer)
+
+      const newInvoice = `INV-${String(newNextInvoice).padStart(4, '0')}`
+      const newCustomer = `C-${String(newNextCustomer).padStart(4, '0')}`
+
+      setSalesForm(
+        recalcSalesUnpaid({
+          invoiceNo: newInvoice,
+          customerNo: newCustomer,
+          date: getTodayISO(),
+          customerName: '',
+          product: '',
+          total: '',
+          cash: '',
+          unpaid: '',
+          note: '',
+        }),
+      )
+    } catch (err) {
+      console.error('Unerwarteter Fehler in handleSalesSubmit', err)
+      alert('Unerwarteter Fehler beim Speichern. Details in der Konsole.')
     }
-
-    // create new sale
-    const id = sales.length ? Math.max(...sales.map((s) => s.id || 0)) + 1 : 1
-    setSales((prev) => [...prev, { id, ...saleData }])
-
-    const newNextInvoice = nextInvoiceNumber + 1
-    const newNextCustomer = nextCustomerNumber + 1
-    setNextInvoiceNumber(newNextInvoice)
-    setNextCustomerNumber(newNextCustomer)
-
-    const newInvoice = `INV-${String(newNextInvoice).padStart(4, '0')}`
-    const newCustomer = `C-${String(newNextCustomer).padStart(4, '0')}`
-
-    setSalesForm(
-      recalcSalesUnpaid({
-        invoiceNo: newInvoice,
-        customerNo: newCustomer,
-        date: getTodayISO(),
-        customerName: '',
-        product: '',
-        total: '',
-        cash: '',
-        unpaid: '',
-        note: '',
-      }),
-    )
   }
 
   function handleRefundInvoiceChange(invoiceNo) {
@@ -534,20 +1000,24 @@ function App() {
     )
   }
 
-  function handleRefundSubmit(e) {
+  
+  async function handleRefundSubmit(e) {
     e.preventDefault()
-    const { invoiceNo, date, customerNo, customerName, product, total, cash, unpaid, note } = refundForm
+    const { invoiceNo, date, customerNo, customerName, product, total, cash, unpaid, note } =
+      refundForm
+
     if (!invoiceNo || !date) {
       alert('Please select an invoice and date.')
       return
     }
 
     const relatedSale = sales.find((s) => s.invoiceNo === invoiceNo)
-    const finalProduct = product && product.trim()
-      ? product.trim()
-      : relatedSale
-      ? relatedSale.product
-      : ''
+    const finalProduct =
+      product && product.trim()
+        ? product.trim()
+        : relatedSale
+        ? relatedSale.product
+        : ''
 
     const refundData = {
       invoiceNo,
@@ -561,71 +1031,291 @@ function App() {
       note: note ? note.trim() : '',
     }
 
-    if (editingRefund) {
-      const oldRefund = editingRefund
-      const updatedRefund = { ...oldRefund, ...refundData }
-
-      const fieldsToTrack = ['date', 'customerName', 'product', 'total', 'cash', 'unpaid', 'note']
-      const changes = []
-
-      fieldsToTrack.forEach((field) => {
-        const oldValue = oldRefund[field]
-        const newValue = updatedRefund[field]
-        if (String(oldValue ?? '') !== String(newValue ?? '')) {
-          changes.push({ field, oldValue, newValue })
+    try {
+      if (editingRefund) {
+        const payload = {
+          user_id: STATIC_USER_ID,
+          invoice_no: refundData.invoiceNo,
+          customer_no: refundData.customerNo,
+          date: refundData.date,
+          customer_name: refundData.customerName,
+          product: refundData.product,
+          note: refundData.note,
+          total_amount: refundData.total,
+          cash: refundData.cash,
+          unpaid: refundData.unpaid,
         }
-      })
 
-      if (changes.length) {
-        setChangeLog((prev) => {
-          const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
-          return [
-            ...prev,
-            {
-              id: nextId,
-              entityType: 'refund',
-              entityId: oldRefund.id,
-              invoiceNo: oldRefund.invoiceNo,
-              changedAt: new Date().toISOString(),
-              changes,
-            },
-          ]
+        const { error } = await supabase
+          .from('refunds')
+          .update(payload)
+          .eq('id', editingRefund.id)
+          .eq('user_id', STATIC_USER_ID)
+
+        if (error) {
+          console.error('Fehler beim Aktualisieren der Refund in Supabase', error)
+          alert('Fehler beim Speichern der Änderung (Supabase). Details in der Konsole.')
+          return
+        }
+
+        const oldRefund = editingRefund
+        const updatedRefund = { ...oldRefund, ...refundData }
+
+        const fieldsToTrack = ['date', 'customerName', 'product', 'total', 'cash', 'unpaid', 'note']
+        const changes = []
+
+        fieldsToTrack.forEach((field) => {
+          const oldValue = oldRefund[field]
+          const newValue = updatedRefund[field]
+          if (String(oldValue ?? '') !== String(newValue ?? '')) {
+            changes.push({ field, oldValue, newValue })
+          }
         })
+
+        if (changes.length) {
+          setChangeLog((prev) => {
+            const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
+            return [
+              ...prev,
+              {
+                id: nextId,
+                entityType: 'refund',
+                entityId: oldRefund.id,
+                invoiceNo: oldRefund.invoiceNo,
+                changedAt: new Date().toISOString(),
+                changes,
+              },
+            ]
+          })
+        }
+
+        setRefunds((prev) =>
+          prev.map((r) => (r.id === editingRefund.id ? { ...r, ...refundData } : r)),
+        )
+      } else {
+        const payload = {
+          user_id: STATIC_USER_ID,
+          invoice_no: refundData.invoiceNo,
+          customer_no: refundData.customerNo,
+          date: refundData.date,
+          customer_name: refundData.customerName,
+          product: refundData.product,
+          note: refundData.note,
+          total_amount: refundData.total,
+          cash: refundData.cash,
+          unpaid: refundData.unpaid,
+        }
+
+        const { data, error } = await supabase
+          .from('refunds')
+          .insert(payload)
+          .select()
+          .single()
+
+        if (error) {
+          console.error('Fehler beim Speichern der Refund in Supabase', error)
+          alert('Fehler beim Speichern. Details in der Konsole.')
+          return
+        }
+
+        const newRefund = {
+          id: data.id,
+          invoiceNo: data.invoice_no || refundData.invoiceNo,
+          customerNo: data.customer_no || refundData.customerNo,
+          date: data.date || refundData.date,
+          customerName: data.customer_name || refundData.customerName,
+          product: data.product || refundData.product,
+          note: data.note || refundData.note,
+          total: Number(data.total_amount ?? refundData.total),
+          cash: Number(data.cash ?? refundData.cash),
+          unpaid: Number(data.unpaid ?? refundData.unpaid),
+        }
+
+        setRefunds((prev) => [...prev, newRefund])
       }
 
-      setRefunds((prev) =>
-        prev.map((r) => (r.id === editingRefund.id ? { ...r, ...refundData } : r)),
+      setEditingRefund(null)
+      setRefundForm(
+        recalcRefundUnpaid({
+          invoiceNo: '',
+          date: getTodayISO(),
+          customerNo: '',
+          customerName: '',
+          product: '',
+          total: '',
+          cash: '',
+          unpaid: '',
+          note: '',
+        }),
       )
-    } else {
-      const id = refunds.length ? Math.max(...refunds.map((r) => r.id || 0)) + 1 : 1
-      setRefunds((prev) => [...prev, { id, ...refundData }])
+    } catch (err) {
+      console.error('Unerwarteter Fehler in handleRefundSubmit', err)
+      alert('Unerwarteter Fehler beim Speichern. Details in der Konsole.')
+    }
+  }
+
+
+
+  async function handleExpenseSubmit(e) {
+    e.preventDefault()
+    const cash = Number(expenseForm.cash) || 0
+    const date = expenseForm.date || getTodayISO()
+
+    const baseData = {
+      date,
+      description: expenseForm.description.trim(),
+      note: expenseForm.note.trim(),
+      cash,
     }
 
-    setEditingRefund(null)
-    setRefundForm(
-      recalcRefundUnpaid({
-        invoiceNo: '',
+    try {
+      if (editingExpense) {
+        const payload = {
+          user_id: STATIC_USER_ID,
+          date: baseData.date,
+          description: baseData.description,
+          note: baseData.note,
+          cash: baseData.cash,
+        }
+
+        const { error } = await supabase
+          .from('expenses')
+          .update(payload)
+          .eq('id', editingExpense.id)
+          .eq('user_id', STATIC_USER_ID)
+
+        if (error) {
+          console.error('Fehler beim Aktualisieren der Expense in Supabase', error)
+          alert('Fehler beim Speichern der Änderung (Supabase). Details in der Konsole.')
+          return
+        }
+
+        const oldExpense = editingExpense
+        const updatedExpense = { ...oldExpense, ...baseData }
+
+        const fieldsToTrack = ['date', 'description', 'note', 'cash']
+        const changes = []
+
+        fieldsToTrack.forEach((field) => {
+          const oldValue = oldExpense[field]
+          const newValue = updatedExpense[field]
+          if (String(oldValue ?? '') !== String(newValue ?? '')) {
+            changes.push({ field, oldValue, newValue })
+          }
+        })
+
+        if (changes.length) {
+          setChangeLog((prev) => {
+            const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
+            return [
+              ...prev,
+              {
+                id: nextId,
+                entityType: 'expense',
+                entityId: oldExpense.id,
+                changedAt: new Date().toISOString(),
+                changes,
+              },
+            ]
+          })
+        }
+
+        setExpenses((prev) =>
+          prev.map((ex) => (ex.id === editingExpense.id ? updatedExpense : ex)),
+        )
+      } else {
+        const payload = {
+          user_id: STATIC_USER_ID,
+          date: baseData.date,
+          description: baseData.description,
+          note: baseData.note,
+          cash: baseData.cash,
+        }
+
+        const { data, error } = await supabase
+          .from('expenses')
+          .insert(payload)
+          .select()
+          .single()
+
+        if (error) {
+          console.error('Fehler beim Speichern der Expense in Supabase', error)
+          alert('Fehler beim Speichern. Details in der Konsole.')
+          return
+        }
+
+        const newExpense = {
+          id: data.id,
+          date: data.date || baseData.date,
+          description: data.description || baseData.description,
+          note: data.note || baseData.note,
+          cash: Number(data.cash ?? baseData.cash),
+        }
+
+        setExpenses((prev) => [...prev, newExpense])
+      }
+
+      setEditingExpense(null)
+      setShowExpenseForm(false)
+      setExpenseForm({
         date: getTodayISO(),
-        customerNo: '',
-        customerName: '',
-        product: '',
-        total: '',
-        cash: '',
-        unpaid: '',
+        description: '',
         note: '',
-      }),
-    )
+        cash: '',
+      })
+    } catch (err) {
+      console.error('Unerwarteter Fehler in handleExpenseSubmit', err)
+      alert('Unerwarteter Fehler beim Speichern. Details in der Konsole.')
+    }
   }
 
-  function deleteSale(id) {
+  async function deleteSale(id) {
     if (!window.confirm('Delete this sales entry?')) return
-    setSales((prev) => prev.filter((s) => s.id !== id))
+
+    try {
+      const { error } = await supabase
+        .from('sales')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', STATIC_USER_ID)
+
+      if (error) {
+        console.error('Fehler beim Löschen der Sale in Supabase', error)
+        alert('Fehler beim Löschen. Details in der Konsole.')
+        return
+      }
+
+      setSales((prev) => prev.filter((s) => s.id !== id))
+    } catch (err) {
+      console.error('Unerwarteter Fehler beim Löschen der Sale', err)
+      alert('Unerwarteter Fehler beim Löschen. Details in der Konsole.')
+    }
   }
 
-  function deleteRefund(id) {
+  
+  async function deleteRefund(id) {
     if (!window.confirm('Delete this refund entry?')) return
-    setRefunds((prev) => prev.filter((r) => r.id !== id))
+
+    try {
+      const { error } = await supabase
+        .from('refunds')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', STATIC_USER_ID)
+
+      if (error) {
+        console.error('Fehler beim Löschen der Refund in Supabase', error)
+        alert('Fehler beim Löschen. Details in der Konsole.')
+        return
+      }
+
+      setRefunds((prev) => prev.filter((r) => r.id !== id))
+    } catch (err) {
+      console.error('Unerwarteter Fehler beim Löschen der Refund', err)
+      alert('Unerwarteter Fehler beim Löschen. Details in der Konsole.')
+    }
   }
+
 
   function openEditExpense(exp) {
     setEditingExpense(exp)
@@ -638,22 +1328,58 @@ function App() {
     setShowExpenseForm(true)
   }
 
-  function deleteExpense(id) {
+  async function deleteExpense(id) {
     if (!window.confirm('Delete this expense entry?')) return
-    setExpenses((prev) => prev.filter((e) => e.id !== id))
+
+    try {
+      const { error } = await supabase
+        .from('expenses')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', STATIC_USER_ID)
+
+      if (error) {
+        console.error('Fehler beim Löschen der Expense in Supabase', error)
+        alert('Fehler beim Löschen. Details in der Konsole.')
+        return
+      }
+
+      setExpenses((prev) => prev.filter((e) => e.id !== id))
+    } catch (err) {
+      console.error('Unerwarteter Fehler beim Löschen der Expense', err)
+      alert('Unerwarteter Fehler beim Löschen. Details in der Konsole.')
+    }
   }
 
-  function deleteSupplier(id) {
+    async function deleteSupplier(id) {
     const hasOrders = supplierOrders.some((o) => o.supplierId === id)
     if (hasOrders) {
       alert('Cannot delete supplier with existing orders.')
       return
     }
     if (!window.confirm('Delete this supplier?')) return
-    setSuppliers((prev) => prev.filter((s) => s.id !== id))
+
+    try {
+      const { error } = await supabase
+        .from('suppliers')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', STATIC_USER_ID)
+
+      if (error) {
+        console.error('Fehler beim Löschen des Suppliers in Supabase', error)
+        alert('Fehler beim Löschen. Details in der Konsole.')
+        return
+      }
+
+      setSuppliers((prev) => prev.filter((s) => s.id !== id))
+    } catch (err) {
+      console.error('Unerwarteter Fehler beim Löschen des Suppliers', err)
+      alert('Unerwarteter Fehler beim Löschen. Details in der Konsole.')
+    }
   }
 
-  function openEditSupplierForm(supplier) {
+function openEditSupplierForm(supplier) {
     const hasOrders = supplierOrders.some((o) => o.supplierId === supplier.id)
     if (hasOrders) {
       alert('Cannot edit supplier that has orders.')
@@ -674,7 +1400,7 @@ function App() {
     setEditingSupplier(null)
   }
 
-  function handleSupplierSubmit(e) {
+    async function handleSupplierSubmit(e) {
     e.preventDefault()
     const { name, note, debit, credit } = supplierForm
 
@@ -690,56 +1416,111 @@ function App() {
       credit: Number(credit) || 0,
     }
 
-    if (editingSupplier) {
-      const oldSupplier = editingSupplier
-      const updatedSupplier = { ...oldSupplier, ...base }
-
-      const fieldsToTrack = ['name', 'note', 'debit', 'credit']
-      const changes = []
-
-      fieldsToTrack.forEach((field) => {
-        const oldValue = oldSupplier[field]
-        const newValue = updatedSupplier[field]
-        if (String(oldValue ?? '') !== String(newValue ?? '')) {
-          changes.push({ field, oldValue, newValue })
+    try {
+      if (editingSupplier) {
+        const oldSupplier = editingSupplier
+        const payload = {
+          user_id: STATIC_USER_ID,
+          supplier_name: base.name,
+          note: base.note,
+          debit: base.debit,
+          credit: base.credit,
         }
-      })
 
-      if (changes.length) {
-        setChangeLog((prev) => {
-          const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
-          return [
-            ...prev,
-            {
-              id: nextId,
-              entityType: 'supplier',
-              entityId: oldSupplier.id,
-              changedAt: new Date().toISOString(),
-              changes,
-            },
-          ]
+        const { error } = await supabase
+          .from('suppliers')
+          .update(payload)
+          .eq('id', editingSupplier.id)
+          .eq('user_id', STATIC_USER_ID)
+
+        if (error) {
+          console.error('Fehler beim Aktualisieren des Suppliers in Supabase', error)
+          alert('Fehler beim Speichern der Änderung (Supabase). Details in der Konsole.')
+          return
+        }
+
+        const updatedSupplier = {
+          ...oldSupplier,
+          ...base,
+        }
+
+        const fieldsToTrack = ['name', 'note', 'debit', 'credit']
+        const changes = []
+
+        fieldsToTrack.forEach((field) => {
+          const oldValue = oldSupplier[field]
+          const newValue = updatedSupplier[field]
+          if (String(oldValue ?? '') !== String(newValue ?? '')) {
+            changes.push({ field, oldValue, newValue })
+          }
         })
+
+        if (changes.length) {
+          setChangeLog((prev) => {
+            const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
+            return [
+              ...prev,
+              {
+                id: nextId,
+                entityType: 'supplier',
+                entityId: oldSupplier.id,
+                changedAt: new Date().toISOString(),
+                changes,
+              },
+            ]
+          })
+        }
+
+        setSuppliers((prev) =>
+          prev.map((s) => (s.id === editingSupplier.id ? { ...s, ...base } : s)),
+        )
+      } else {
+        const payload = {
+          user_id: STATIC_USER_ID,
+          supplier_name: base.name,
+          note: base.note,
+          debit: base.debit,
+          credit: base.credit,
+        }
+
+        const { data, error } = await supabase
+          .from('suppliers')
+          .insert(payload)
+          .select()
+          .single()
+
+        if (error) {
+          console.error('Fehler beim Speichern des Suppliers in Supabase', error)
+          alert('Fehler beim Speichern. Details in der Konsole.')
+          return
+        }
+
+        const newSupplier = {
+          id: data.id,
+          name: data.supplier_name || base.name,
+          note: data.note || base.note,
+          debit: Number(data.debit ?? base.debit),
+          credit: Number(data.credit ?? base.credit),
+        }
+
+        setSuppliers((prev) => [...prev, newSupplier])
       }
 
-      setSuppliers((prev) =>
-        prev.map((s) => (s.id === editingSupplier.id ? { ...s, ...base } : s)),
-      )
-    } else {
-      const id = suppliers.length ? Math.max(...suppliers.map((s) => s.id || 0)) + 1 : 1
-      setSuppliers((prev) => [...prev, { id, ...base }])
+      setEditingSupplier(null)
+      setSupplierForm({
+        name: '',
+        note: '',
+        debit: '',
+        credit: '',
+      })
+      setShowSupplierForm(false)
+    } catch (err) {
+      console.error('Unerwarteter Fehler in handleSupplierSubmit', err)
+      alert('Unerwarteter Fehler beim Speichern. Details in der Konsole.')
     }
-
-    setEditingSupplier(null)
-    setSupplierForm({
-      name: '',
-      note: '',
-      debit: '',
-      credit: '',
-    })
-    setShowSupplierForm(false)
   }
 
-  function openSupplierOrderForm() {
+function openSupplierOrderForm() {
     if (!selectedSupplierId) return
     setEditingSupplierOrder(null)
     setSupplierOrderForm({
@@ -771,16 +1552,35 @@ function App() {
     setEditingSupplierOrder(null)
   }
 
-  function deleteSupplierOrder(id) {
+    async function deleteSupplierOrder(id) {
     if (!window.confirm('Delete this order?')) return
-    setSupplierOrders((prev) => prev.filter((o) => o.id !== id))
+
+    try {
+      const { error } = await supabase
+        .from('order')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', STATIC_USER_ID)
+
+      if (error) {
+        console.error('Fehler beim Löschen des Supplier-Orders in Supabase', error)
+        alert('Fehler beim Löschen. Details in der Konsole.')
+        return
+      }
+
+      setSupplierOrders((prev) => prev.filter((o) => o.id !== id))
+    } catch (err) {
+      console.error('Unerwarteter Fehler beim Löschen des Supplier-Orders', err)
+      alert('Unerwarteter Fehler beim Löschen. Details in der Konsole.')
+    }
   }
 
-  function handleSupplierOrderSubmit(e) {
+  async function handleSupplierOrderSubmit(e) {
     e.preventDefault()
     if (!selectedSupplierId) return
 
-    const { date, customerName, product, amountCredit, amountDebit, transactionType } = supplierOrderForm
+    const { date, customerName, product, amountCredit, amountDebit, transactionType } =
+      supplierOrderForm
 
     if (!date || !customerName.trim()) {
       alert('Please fill date and customer name.')
@@ -797,59 +1597,127 @@ function App() {
       amountDebit: Number(amountDebit) || 0,
     }
 
-    if (editingSupplierOrder) {
-      const oldOrder = editingSupplierOrder
-      const updatedOrder = { ...oldOrder, ...data }
-
-      const fieldsToTrack = ['date', 'customerName', 'product', 'transactionType', 'amountCredit', 'amountDebit']
-      const changes = []
-
-      fieldsToTrack.forEach((field) => {
-        const oldValue = oldOrder[field]
-        const newValue = updatedOrder[field]
-        if (String(oldValue ?? '') !== String(newValue ?? '')) {
-          changes.push({ field, oldValue, newValue })
+    try {
+      if (editingSupplierOrder) {
+        const oldOrder = editingSupplierOrder
+        const payload = {
+          user_id: STATIC_USER_ID,
+          supplier_id: selectedSupplierId,
+          date: data.date,
+          customer_name: data.customerName,
+          product: data.product,
+          transaction_type: data.transactionType,
+          amount_credit: data.amountCredit,
+          amount_debit: data.amountDebit,
         }
-      })
 
-      if (changes.length) {
-        setChangeLog((prev) => {
-          const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
-          return [
-            ...prev,
-            {
-              id: nextId,
-              entityType: 'supplierOrder',
-              entityId: oldOrder.id,
-              supplierId: oldOrder.supplierId,
-              changedAt: new Date().toISOString(),
-              changes,
-            },
-          ]
+        const { error } = await supabase
+          .from('order')
+          .update(payload)
+          .eq('id', editingSupplierOrder.id)
+          .eq('user_id', STATIC_USER_ID)
+
+        if (error) {
+          console.error('Fehler beim Aktualisieren des Supplier-Orders in Supabase', error)
+          alert('Fehler beim Speichern der Änderung (Supabase). Details in der Konsole.')
+          return
+        }
+
+        const updatedOrder = { ...oldOrder, ...data }
+
+        const fieldsToTrack = [
+          'date',
+          'customerName',
+          'product',
+          'transactionType',
+          'amountCredit',
+          'amountDebit',
+        ]
+        const changes = []
+
+        fieldsToTrack.forEach((field) => {
+          const oldValue = oldOrder[field]
+          const newValue = updatedOrder[field]
+          if (String(oldValue ?? '') !== String(newValue ?? '')) {
+            changes.push({ field, oldValue, newValue })
+          }
         })
+
+        if (changes.length) {
+          setChangeLog((prev) => {
+            const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
+            return [
+              ...prev,
+              {
+                id: nextId,
+                entityType: 'supplierOrder',
+                entityId: oldOrder.id,
+                supplierId: oldOrder.supplierId,
+                changedAt: new Date().toISOString(),
+                changes,
+              },
+            ]
+          })
+        }
+
+        setSupplierOrders((prev) =>
+          prev.map((o) => (o.id === editingSupplierOrder.id ? { ...o, ...data } : o)),
+        )
+      } else {
+        const payload = {
+          user_id: STATIC_USER_ID,
+          supplier_id: selectedSupplierId,
+          date: data.date,
+          customer_name: data.customerName,
+          product: data.product,
+          transaction_type: data.transactionType,
+          amount_credit: data.amountCredit,
+          amount_debit: data.amountDebit,
+        }
+
+        const { data: inserted, error } = await supabase
+          .from('order')
+          .insert(payload)
+          .select()
+          .single()
+
+        if (error) {
+          console.error('Fehler beim Speichern des Supplier-Orders in Supabase', error)
+          alert('Fehler beim Speichern. Details in der Konsole.')
+          return
+        }
+
+        const newOrder = {
+          id: inserted.id,
+          supplierId: inserted.supplier_id,
+          date: inserted.date || data.date,
+          customerName: inserted.customer_name || data.customerName,
+          product: inserted.product || data.product,
+          transactionType: inserted.transaction_type || data.transactionType,
+          amountCredit: Number(inserted.amount_credit ?? data.amountCredit),
+          amountDebit: Number(inserted.amount_debit ?? data.amountDebit),
+        }
+
+        setSupplierOrders((prev) => [...prev, newOrder])
       }
 
-      setSupplierOrders((prev) =>
-        prev.map((o) => (o.id === editingSupplierOrder.id ? { ...o, ...data } : o)),
-      )
-    } else {
-      const id = supplierOrders.length ? Math.max(...supplierOrders.map((o) => o.id || 0)) + 1 : 1
-      setSupplierOrders((prev) => [...prev, { id, ...data }])
+      // keep form open for continuous entry
+      setEditingSupplierOrder(null)
+      setSupplierOrderForm({
+        date: getTodayISO(),
+        customerName: '',
+        product: '',
+        transactionType: 'invoice',
+        amountCredit: '',
+        amountDebit: '',
+      })
+    } catch (err) {
+      console.error('Unerwarteter Fehler in handleSupplierOrderSubmit', err)
+      alert('Unerwarteter Fehler beim Speichern. Details in der Konsole.')
     }
-
-    // keep form open for continuous entry
-    setEditingSupplierOrder(null)
-    setSupplierOrderForm({
-      date: getTodayISO(),
-      customerName: '',
-      product: '',
-      transactionType: 'invoice',
-      amountCredit: '',
-      amountDebit: '',
-    })
   }
 
-  function handleExportSupplierPDF() {
+function handleExportSupplierPDF() {
     const supplier = suppliers.find((s) => s.id === selectedSupplierId)
     if (!supplier) return
 
@@ -1081,17 +1949,61 @@ function App() {
     })
   }
 
-  function confirmSalesImport() {
+  async function confirmSalesImport() {
     if (!salesImportPreview || !salesImportPreview.rows?.length) return
 
-    setSales((prev) => [...prev, ...salesImportPreview.rows])
+    const rows = salesImportPreview.rows
 
-    const created = salesImportPreview.created || salesImportPreview.rows.length
-    setNextInvoiceNumber((n) => n + created)
-    setNextCustomerNumber((n) => n + created)
+    const payloads = rows.map((row) => ({
+      user_id: STATIC_USER_ID,
+      invoice_no: row.invoiceNo,
+      customer_no: row.customerNo,
+      date: row.date,
+      customer_name: row.customerName,
+      product: row.product,
+      note: row.note || '',
+      total_amount: Number(row.total) || 0,
+      cash: Number(row.cash) || 0,
+      outstanding: Number(row.unpaid) || 0,
+    }))
 
-    setSalesImportPreview(null)
-    alert(`Imported ${created} sales rows.`)
+    try {
+      const { data, error } = await supabase
+        .from('sales')
+        .insert(payloads)
+        .select()
+
+      if (error) {
+        console.error('Fehler beim Import der Sales in Supabase', error)
+        alert('Fehler beim Import in die Datenbank. Details in der Konsole.')
+        return
+      }
+
+      const importedSales = data.map((row) => ({
+        id: row.id,
+        invoiceNo: row.invoice_no || '',
+        customerNo: row.customer_no || '',
+        date: row.date || '',
+        customerName: row.customer_name || '',
+        product: row.product || '',
+        note: row.note || '',
+        total: String(row.total_amount ?? ''),
+        cash: String(row.cash ?? ''),
+        unpaid: String(row.outstanding ?? ''),
+      }))
+
+      setSales((prev) => [...prev, ...importedSales])
+
+      const created = rows.length
+      setNextInvoiceNumber((n) => n + created)
+      setNextCustomerNumber((n) => n + created)
+
+      setSalesImportPreview(null)
+      alert(`Imported ${created} sales rows to Supabase.`)
+    } catch (e) {
+      console.error('Unerwarteter Fehler beim Import der Sales', e)
+      alert('Unerwarteter Fehler beim Import. Details in der Konsole.')
+    }
   }
 
   function cancelSalesImport() {
@@ -2165,76 +3077,7 @@ const headerMeta =
                   </h3>
                 </div>
                 <div className="card-body">
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault()
-                      const cash = Number(expenseForm.cash) || 0
-                      const date = expenseForm.date || getTodayISO()
-
-                      if (editingExpense) {
-                        // update existing expense + track changes
-                        const oldExpense = editingExpense
-                        const updatedExpense = {
-                          ...oldExpense,
-                          date,
-                          description: expenseForm.description.trim(),
-                          note: expenseForm.note.trim(),
-                          cash,
-                        }
-
-                        const fieldsToTrack = ['date', 'description', 'note', 'cash']
-                        const changes = []
-
-                        fieldsToTrack.forEach((field) => {
-                          const oldValue = oldExpense[field]
-                          const newValue = updatedExpense[field]
-                          if (String(oldValue ?? '') !== String(newValue ?? '')) {
-                            changes.push({ field, oldValue, newValue })
-                          }
-                        })
-
-                        if (changes.length) {
-                          setChangeLog((prev) => {
-                            const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
-                            return [
-                              ...prev,
-                              {
-                                id: nextId,
-                                entityType: 'expense',
-                                entityId: oldExpense.id,
-                                changedAt: new Date().toISOString(),
-                                changes,
-                              },
-                            ]
-                          })
-                        }
-
-                        setExpenses((prev) =>
-                          prev.map((ex) =>
-                            ex.id === editingExpense.id ? updatedExpense : ex,
-                          ),
-                        )
-                      } else {
-                        // create new expense
-                        const id = expenses.length
-                          ? Math.max(...expenses.map((x) => x.id || 0)) + 1
-                          : 1
-                        setExpenses((prev) => [
-                          ...prev,
-                          {
-                            id,
-                            date,
-                            description: expenseForm.description.trim(),
-                            note: expenseForm.note.trim(),
-                            cash,
-                          },
-                        ])
-                      }
-
-                      setEditingExpense(null)
-                      setShowExpenseForm(false)
-                    }}
-                  >
+                  <form onSubmit={handleExpenseSubmit}>
                     <div className="form-row">
                       <div className="form-field">
                         <label>Date</label>
@@ -2258,7 +3101,10 @@ const headerMeta =
                             type="text"
                             value={expenseForm.description}
                             onChange={(e) =>
-                              setExpenseForm((prev) => ({ ...prev, description: e.target.value }))
+                              setExpenseForm((prev) => ({
+                                ...prev,
+                                description: e.target.value,
+                              }))
                             }
                             required
                           />
