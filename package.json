@@ -8,9 +8,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.86.0",
+    "jspdf": "^2.5.1",
     "react": "^18.3.0",
-    "react-dom": "^18.3.0",
-    "jspdf": "^2.5.1"
+    "react-dom": "^18.3.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react-swc": "^3.5.0",
