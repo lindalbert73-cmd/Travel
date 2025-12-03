@@ -18,7 +18,8 @@ import { STORAGE_KEYS } from './config/storageKeys'
 import { loadAuthConfig, saveAuthConfig } from './utils/authConfig'
 
 
-const STATIC_USER_ID = '00000000-0000-0000-0000-000000000001'
+
+const ADMIN_EMAIL = 'lindalbert73@gmail.com'
 
 const COMMON_PRODUCTS = [
   'Ticket Flight',
@@ -43,20 +44,110 @@ const COMMON_PRODUCTS = [
 
 function App() {
   const [user, setUser] = useState(null)
+  const [authInitializing, setAuthInitializing] = useState(true)
   const [programName, setProgramName] = useState('Control console')
   const [profileForm, setProfileForm] = useState({
     programName: 'Control console',
     email: '',
+    businessName: '',
+    phone: '',
+    address: '',
+    timezone: 'Europe/Berlin',
+    logoUrl: '',
   })
+
+  const isAdmin = user?.email === ADMIN_EMAIL
 
   const [activeView, setActiveView] = useState('dashboard')
   const [sales, setSales] = useState([])
   const [refunds, setRefunds] = useState([])
   const [nextInvoiceNumber, setNextInvoiceNumber] = useState(1)
   const [nextCustomerNumber, setNextCustomerNumber] = useState(1)
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  // Counters (Invoice / Customer) aus Supabase laden
+  useEffect(() => {
+    if (!user?.id) return
 
-  const [suppliers, setSuppliers] = useState([])
-  const [supplierOrders, setSupplierOrders] = useState([])
+    let cancelled = false
+
+    async function syncCounters() {
+      try {
+        const { data, error } = await supabase
+          .from('counters')
+          .select('invoice_counter, customer_counter')
+          .eq('user_id', user.id)
+          .limit(1)
+
+        if (error) {
+          console.error('Error loading counters from Supabase', error)
+          return
+        }
+
+        if (cancelled) return
+
+        const row = data && data[0]
+
+        if (!row) {
+          // noch keine Zeile für diesen User → anlegen
+          const { data: inserted, error: insertError } = await supabase
+            .from('counters')
+            .insert({
+              user_id: user.id,
+              invoice_counter: 1,
+              customer_counter: 1,
+            })
+            .select('invoice_counter, customer_counter')
+            .single()
+
+          if (insertError) {
+            console.error('Error creating initial counters in Supabase', insertError)
+            return
+          }
+
+          if (cancelled) return
+
+          setNextInvoiceNumber(inserted.invoice_counter || 1)
+          setNextCustomerNumber(inserted.customer_counter || 1)
+        } else {
+          // vorhandene Werte aus DB nehmen
+          setNextInvoiceNumber(row.invoice_counter || 1)
+          setNextCustomerNumber(row.customer_counter || 1)
+        }
+      } catch (e) {
+        console.error('Unexpected error loading counters from Supabase', e)
+      }
+    }
+
+    syncCounters()
+
+    return () => {
+      cancelled = true
+    }
+  }, [user])
+
+    // Hilfsfunktion: Zähler in State + Supabase updaten
+  async function updateCountersInSupabase(newInvoiceCounter, newCustomerCounter) {
+    setNextInvoiceNumber(newInvoiceCounter)
+    setNextCustomerNumber(newCustomerCounter)
+
+    if (!user?.id) return
+
+    try {
+      const { error } = await supabase
+        .from('counters')
+        .update({
+          invoice_counter: newInvoiceCounter,
+          customer_counter: newCustomerCounter,
+        })
+        .eq('user_id', user.id)
+
+      if (error) {
+        console.error('Error updating counters in Supabase', error)
+      }
+    } catch (e) {
+      console.error('Unexpected error updating counters in Supabase', e)
+    }
+  }
 
   // Expenses
   const [expenses, setExpenses] = useState([])
@@ -67,18 +158,92 @@ function App() {
     note: '',
     cash: '',
   })
-  const [expenseFilterMode, setExpenseFilterMode] = useState('all') // all | today | week | month
+   const [expenseFilterMode, setExpenseFilterMode] = useState('all') // all | today | week | month
   const [expenseFilterFrom, setExpenseFilterFrom] = useState('')
   const [expenseFilterTo, setExpenseFilterTo] = useState('')
   const [expenseSearch, setExpenseSearch] = useState('')
   const [cashOpeningBalance, setCashOpeningBalance] = useState('')
   const [changeLog, setChangeLog] = useState([])
-  const [historyModal, setHistoryModal] = useState({ open: false, entityType: null, entityId: null, title: '' })
+  const [historyModal, setHistoryModal] = useState({
+    open: false,
+    entityType: null,
+    entityId: null,
+    title: '',
+  })
+
+  // Opening Balance aus Supabase laden, sobald der User bekannt ist
+  useEffect(() => {
+    if (!user?.id) return
+
+    let cancelled = false
+
+    async function loadOpeningBalance() {
+      try {
+        const { data, error } = await supabase
+          .from('opening_balance')
+          .select('balance')
+          .eq('user_id', user.id)
+          .maybeSingle()
+
+        if (error) {
+          console.error('Fehler beim Laden der Opening Balance', error)
+          return
+        }
+
+        if (cancelled) return
+
+        if (!data) {
+          // Noch kein Eintrag in DB → leer lassen
+          setCashOpeningBalance('')
+        } else {
+          setCashOpeningBalance(String(data.balance ?? 0))
+        }
+      } catch (e) {
+        console.error('Unerwarteter Fehler beim Laden der Opening Balance', e)
+      }
+    }
+
+    loadOpeningBalance()
+
+    return () => {
+      cancelled = true
+    }
+  }, [user])
+
+  // Opening Balance in Supabase speichern, sobald sie sich ändert
+  useEffect(() => {
+    if (!user?.id) return
+
+    const num = Number(cashOpeningBalance) || 0
+
+    async function persistOpeningBalance() {
+      try {
+        const { error } = await supabase
+          .from('opening_balance')
+          .upsert(
+            { user_id: user.id, balance: num },
+            { onConflict: 'user_id' },
+          )
+
+        if (error) {
+          console.error('Fehler beim Speichern der Opening Balance', error)
+        }
+      } catch (e) {
+        console.error('Unerwarteter Fehler beim Speichern der Opening Balance', e)
+      }
+    }
+
+    persistOpeningBalance()
+  }, [cashOpeningBalance, user])
 
   const [cashLedgerFilterMode, setCashLedgerFilterMode] = useState('all') // all | today | week | month
   const [cashLedgerDateFrom, setCashLedgerDateFrom] = useState('')
   const [cashLedgerDateTo, setCashLedgerDateTo] = useState('')
   const [cashLedgerSearch, setCashLedgerSearch] = useState('')
+
+
+  const [suppliers, setSuppliers] = useState([])
+  const [supplierOrders, setSupplierOrders] = useState([])
 
 
   const [showSupplierForm, setShowSupplierForm] = useState(false)
@@ -153,480 +318,319 @@ function App() {
   const [showSalesImport, setShowSalesImport] = useState(false)
   const [salesImportPreview, setSalesImportPreview] = useState(null)
 
-  // load persisted data
-  useEffect(() => {
+  
+// check auth session on initial load to avoid login flicker
+useEffect(() => {
+  let isMounted = true
+
+  async function loadSession() {
     try {
-      const s = window.localStorage.getItem(STORAGE_KEYS.sales)
-      const r = window.localStorage.getItem(STORAGE_KEYS.refunds)
-      const inv = window.localStorage.getItem(STORAGE_KEYS.invoiceCounter)
-      const cust = window.localStorage.getItem(STORAGE_KEYS.customerCounter)
-      const sup = window.localStorage.getItem(STORAGE_KEYS.suppliers)
-      const supOrders = window.localStorage.getItem(STORAGE_KEYS.supplierOrders)
-      const exp = window.localStorage.getItem(STORAGE_KEYS.expenses)
-      const opening = window.localStorage.getItem(STORAGE_KEYS.cashOpening)
-      const authRaw = window.localStorage.getItem(STORAGE_KEYS.auth)
-
-      setSales(s ? JSON.parse(s) : [])
-      setRefunds(r ? JSON.parse(r) : [])
-      setNextInvoiceNumber(inv ? Number(inv) : 1)
-      setNextCustomerNumber(cust ? Number(cust) : 1)
-      setSuppliers(sup ? JSON.parse(sup) : [])
-      setSupplierOrders(supOrders ? JSON.parse(supOrders) : [])
-      setExpenses(exp ? JSON.parse(exp) : [])
-      setCashOpeningBalance(opening ? String(Number(opening) || 0) : '')
-      const log = window.localStorage.getItem(STORAGE_KEYS.changeLog)
-      setChangeLog(log ? JSON.parse(log) : [])
-
-      if (authRaw) {
-        try {
-          const authCfg = JSON.parse(authRaw)
-          if (authCfg.programName) {
-            setProgramName(authCfg.programName)
-          }
-          if (authCfg.email) {
-            setProfileForm((prev) => ({
-              ...prev,
-              email: authCfg.email,
-              programName: authCfg.programName || prev.programName,
-            }))
-          }
-        } catch (err) {
-          console.error('Failed to parse auth config', err)
-        }
+      const { data } = await supabase.auth.getUser()
+      // Wenn keine Session existiert, ist das ok – wir lassen user einfach null
+      if (isMounted && data && data.user) {
+        setUser({ id: data.user.id, email: data.user.email || '' })
       }
     } catch (e) {
-      console.error('Failed to load state', e)
+      // Auth-Fehler beim Laden der Session ignorieren, um Konsole sauber zu halten
+    } finally {
+      if (isMounted) {
+        setAuthInitializing(false)
+      }
     }
-  }, [])
+  }
 
-  // sync sales with Supabase (cloud) on startup
+  loadSession()
+
+  return () => {
+    isMounted = false
+  }
+}, [])
+
+// automatic logout after 10 minutes of inactivity
+useEffect(() => {
+  if (!user) return
+
+  let timeoutId
+
+  const ACTIVITY_EVENTS = ['mousemove', 'keydown', 'click', 'scroll']
+
+  const resetTimer = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+    }
+    timeoutId = setTimeout(() => {
+      handleLogout()
+    }, 10 * 60 * 1000) // 10 minutes
+  }
+
+  ACTIVITY_EVENTS.forEach((eventName) => {
+    window.addEventListener(eventName, resetTimer)
+  })
+
+  resetTimer()
+
+  return () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+    }
+    ACTIVITY_EVENTS.forEach((eventName) => {
+      window.removeEventListener(eventName, resetTimer)
+    })
+  }
+}, [user])
+
+
+
+
+
+// load profile from Supabase whenever we have a logged-in user
   useEffect(() => {
-    async function syncSalesWithSupabase() {
+    if (!user || !user.id) return
+
+    let cancelled = false
+
+    async function loadProfile() {
       try {
         const { data, error } = await supabase
-          .from('sales')
+          .from('profiles')
           .select('*')
-          .eq('user_id', STATIC_USER_ID)
-          .order('created_at', { ascending: false })
+          .eq('user_id', user.id)
+          .maybeSingle()
 
         if (error) {
-          console.error('Error loading sales from Supabase', error)
+          console.error('Error loading profile from Supabase', error)
           return
         }
 
-        if (data && data.length > 0) {
-          const mapped = data.map((row) => ({
-            id: row.id,
-            invoiceNo: row.invoice_no || '',
-            customerNo: row.customer_no || '',
-            date: row.date || '',
-            customerName: row.customer_name || '',
-            product: row.product || '',
-            note: row.note || '',
-            total: String(row.total_amount ?? ''),
-            cash: String(row.cash ?? ''),
-            unpaid: String(row.outstanding ?? ''),
+        if (cancelled) return
+
+        if (!data) {
+          setProfileForm((prev) => ({
+            ...prev,
+            programName: 'Control console',
+            email: user.email || '',
+            businessName: '',
+            phone: '',
+            address: '',
+            timezone: 'Europe/Berlin',
+            logoUrl: '',
           }))
-          setSales(mapped)
-          return
+          setProgramName('Control console')
+        } else {
+          setProfileForm({
+            programName: data.program_name || 'Control console',
+            email: data.owner_email || user.email || '',
+            businessName: data.business_name || '',
+            phone: data.phone || '',
+            address: data.address || '',
+            timezone: data.timezone || 'Europe/Berlin',
+            logoUrl: data.logo_url || '',
+          })
+          setProgramName(data.program_name || 'Control console')
         }
-
-        // Wenn Supabase noch leer ist, aber localStorage Daten hat → einmalig rüberkopieren
-        const localRaw = window.localStorage.getItem(STORAGE_KEYS.sales)
-        if (!localRaw) return
-
-        const localSales = JSON.parse(localRaw)
-        if (!Array.isArray(localSales) || localSales.length === 0) return
-
-        const rows = localSales.map((s) => ({
-          user_id: STATIC_USER_ID,
-          invoice_no: s.invoiceNo ?? '',
-          customer_no: s.customerNo ?? '',
-          date: s.date || null,
-          customer_name: s.customerName ?? '',
-          product: s.product ?? '',
-          note: s.note ?? '',
-          total_amount: Number(s.total) || 0,
-          cash: Number(s.cash) || 0,
-          outstanding: Number(s.unpaid) || 0,
-        }))
-
-        const { data: inserted, error: insertError } = await supabase
-          .from('sales')
-          .insert(rows)
-          .select()
-
-        if (insertError) {
-          console.error('Error seeding Supabase sales from localStorage', insertError)
-          return
-        }
-
-        const mappedInserted = inserted.map((row) => ({
-          id: row.id,
-          invoiceNo: row.invoice_no || '',
-          customerNo: row.customer_no || '',
-          date: row.date || '',
-          customerName: row.customer_name || '',
-          product: row.product || '',
-          note: row.note || '',
-          total: String(row.total_amount ?? ''),
-          cash: String(row.cash ?? ''),
-          unpaid: String(row.outstanding ?? ''),
-        }))
-        setSales(mappedInserted)
-      } catch (e) {
-        console.error('Failed to sync sales with Supabase', e)
+      } catch (err) {
+        console.error('Unexpected error loading profile', err)
       }
     }
 
-    syncSalesWithSupabase()
-  }, [])
+    loadProfile()
 
-  // sync refunds with Supabase (cloud) on startup
-  useEffect(() => {
-    async function syncRefundsWithSupabase() {
-      try {
-        const { data, error } = await supabase
-          .from('refunds')
-          .select('*')
-          .eq('user_id', STATIC_USER_ID)
-          .order('created_at', { ascending: false })
-
-        if (error) {
-          console.error('Error loading refunds from Supabase', error)
-          return
-        }
-
-        if (data && data.length > 0) {
-          const mapped = data.map((row) => ({
-            id: row.id,
-            invoiceNo: row.invoice_no || '',
-            customerNo: row.customer_no || '',
-            date: row.date || '',
-            customerName: row.customer_name || '',
-            product: row.product || '',
-            note: row.note || '',
-            total: Number(row.total_amount ?? 0),
-            cash: Number(row.cash ?? 0),
-            unpaid: Number(row.unpaid ?? 0),
-          }))
-          setRefunds(mapped)
-          return
-        }
-
-        const localRaw = window.localStorage.getItem(STORAGE_KEYS.refunds)
-        if (!localRaw) return
-
-        const localRefunds = JSON.parse(localRaw)
-        if (!Array.isArray(localRefunds) || localRefunds.length === 0) return
-
-        const rows = localRefunds.map((r) => ({
-          user_id: STATIC_USER_ID,
-          invoice_no: r.invoiceNo ?? '',
-          customer_no: r.customerNo ?? '',
-          date: r.date || null,
-          customer_name: r.customerName ?? '',
-          product: r.product ?? '',
-          note: r.note ?? '',
-          total_amount: Number(r.total) || 0,
-          cash: Number(r.cash) || 0,
-          unpaid: Number(r.unpaid) || 0,
-        }))
-
-        const { data: inserted, error: insertError } = await supabase
-          .from('refunds')
-          .insert(rows)
-          .select()
-
-        if (insertError) {
-          console.error('Error seeding Supabase refunds from localStorage', insertError)
-          return
-        }
-
-        const mappedInserted = inserted.map((row) => ({
-          id: row.id,
-          invoiceNo: row.invoice_no || '',
-          customerNo: row.customer_no || '',
-          date: row.date || '',
-          customerName: row.customer_name || '',
-          product: row.product || '',
-          note: row.note || '',
-          total: Number(row.total_amount ?? 0),
-          cash: Number(row.cash ?? 0),
-          unpaid: Number(row.unpaid ?? 0),
-        }))
-        setRefunds(mappedInserted)
-      } catch (e) {
-        console.error('Failed to sync refunds with Supabase', e)
-      }
+    return () => {
+      cancelled = true
     }
+  }, [user])
 
-    syncRefundsWithSupabase()
-  }, [])
+ // sync sales with Supabase (cloud) when user is known
+useEffect(() => {
+  if (!user?.id) return
 
-  // sync expenses with Supabase (cloud) on startup
-  useEffect(() => {
-    async function syncExpensesWithSupabase() {
-      try {
-        const { data, error } = await supabase
-          .from('expenses')
-          .select('*')
-          .eq('user_id', STATIC_USER_ID)
-          .order('date', { ascending: false })
+  async function syncSalesWithSupabase() {
+    try {
+      const { data, error } = await supabase
+        .from('sales')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: true })
 
-        if (error) {
-          console.error('Error loading expenses from Supabase', error)
-          return
-        }
-
-        if (data && data.length > 0) {
-          const mapped = data.map((row) => ({
-            id: row.id,
-            date: row.date || '',
-            description: row.description || '',
-            note: row.note || '',
-            cash: Number(row.cash ?? 0),
-          }))
-          setExpenses(mapped)
-          return
-        }
-
-        const localRaw = window.localStorage.getItem(STORAGE_KEYS.expenses)
-        if (!localRaw) return
-
-        const localExpenses = JSON.parse(localRaw)
-        if (!Array.isArray(localExpenses) || localExpenses.length === 0) return
-
-        const rows = localExpenses.map((e) => ({
-          user_id: STATIC_USER_ID,
-          date: e.date || null,
-          description: e.description ?? '',
-          note: e.note ?? '',
-          cash: Number(e.cash) || 0,
-        }))
-
-        const { data: inserted, error: insertError } = await supabase
-          .from('expenses')
-          .insert(rows)
-          .select()
-
-        if (insertError) {
-          console.error('Error seeding Supabase expenses from localStorage', insertError)
-          return
-        }
-
-        const mappedInserted = inserted.map((row) => ({
-          id: row.id,
-          date: row.date || '',
-          description: row.description || '',
-          note: row.note || '',
-          cash: Number(row.cash ?? 0),
-        }))
-        setExpenses(mappedInserted)
-      } catch (e) {
-        console.error('Failed to sync expenses with Supabase', e)
+      if (error) {
+        console.error('Error loading sales from Supabase', error)
+        return
       }
-    }
 
-    syncExpensesWithSupabase()
-  }, [])
-
-
-  // sync suppliers and supplier orders with Supabase (cloud) on startup
-  useEffect(() => {
-    async function syncSuppliersAndOrders() {
-      try {
-        const [{ data: supData, error: supError }, { data: orderData, error: orderError }] =
-          await Promise.all([
-            supabase
-              .from('suppliers')
-              .select('*')
-              .eq('user_id', STATIC_USER_ID)
-              .order('created_at', { ascending: true }),
-            supabase
-              .from('order')
-              .select('*')
-              .eq('user_id', STATIC_USER_ID)
-              .order('date', { ascending: true }),
-          ])
-
-        if (supError) {
-          console.error('Error loading suppliers from Supabase', supError)
-        }
-        if (orderError) {
-          console.error('Error loading supplier orders from Supabase', orderError)
-        }
-
-        const suppliersRows = supData || []
-        const ordersRows = orderData || []
-
-        if (suppliersRows.length > 0 || ordersRows.length > 0) {
-          const mappedSuppliers = suppliersRows.map((row) => ({
-            id: row.id,
-            name: row.supplier_name || '',
-            note: row.note || '',
-            debit: Number(row.debit ?? 0),
-            credit: Number(row.credit ?? 0),
-          }))
-
-          const mappedOrders = ordersRows.map((row) => ({
-            id: row.id,
-            supplierId: row.supplier_id,
-            date: row.date || '',
-            customerName: row.customer_name || '',
-            product: row.product || '',
-            transactionType: row.transaction_type || 'invoice',
-            amountCredit: Number(row.amount_credit ?? 0),
-            amountDebit: Number(row.amount_debit ?? 0),
-          }))
-
-          setSuppliers(mappedSuppliers)
-          setSupplierOrders(mappedOrders)
-          return
-        }
-
-        // Supabase ist leer → versuchen, lokale Daten einmalig zu übernehmen
-        const localSupRaw = window.localStorage.getItem(STORAGE_KEYS.suppliers)
-        const localOrdersRaw = window.localStorage.getItem(STORAGE_KEYS.supplierOrders)
-
-        if (!localSupRaw && !localOrdersRaw) {
-          return
-        }
-
-        const localSuppliers = localSupRaw ? JSON.parse(localSupRaw) : []
-        const localOrders = localOrdersRaw ? JSON.parse(localOrdersRaw) : []
-
-        if (!Array.isArray(localSuppliers) || localSuppliers.length === 0) {
-          return
-        }
-
-        // zuerst Suppliers einfügen
-        const supplierInsertRows = localSuppliers.map((s) => ({
-          user_id: STATIC_USER_ID,
-          supplier_name: s.name ?? '',
-          note: s.note ?? '',
-          debit: Number(s.debit) || 0,
-          credit: Number(s.credit) || 0,
-        }))
-
-        const { data: insertedSuppliers, error: insertSupError } = await supabase
-          .from('suppliers')
-          .insert(supplierInsertRows)
-          .select()
-
-        if (insertSupError) {
-          console.error('Error seeding Supabase suppliers from localStorage', insertSupError)
-          return
-        }
-
-        const idMap = new Map()
-        localSuppliers.forEach((s, idx) => {
-          const row = insertedSuppliers[idx]
-          if (row && s.id != null) {
-            idMap.set(s.id, row.id)
-          }
-        })
-
-        let insertedOrders = []
-        if (Array.isArray(localOrders) && localOrders.length > 0 && idMap.size > 0) {
-          const orderInsertRows = localOrders
-            .map((o) => {
-              const supplier_id = idMap.get(o.supplierId)
-              if (!supplier_id) return null
-              return {
-                user_id: STATIC_USER_ID,
-                supplier_id,
-                date: o.date || null,
-                customer_name: o.customerName ?? '',
-                product: o.product ?? '',
-                transaction_type: o.transactionType ?? 'invoice',
-                amount_credit: Number(o.amountCredit) || 0,
-                amount_debit: Number(o.amountDebit) || 0,
-              }
-            })
-            .filter(Boolean)
-
-          if (orderInsertRows.length > 0) {
-            const { data: inserted, error: insertOrderError } = await supabase
-              .from('order')
-              .insert(orderInsertRows)
-              .select()
-
-            if (insertOrderError) {
-              console.error(
-                'Error seeding Supabase supplier orders from localStorage',
-                insertOrderError,
-              )
-            } else {
-              insertedOrders = inserted
-            }
-          }
-        }
-
-        const mappedSuppliersSeeded = insertedSuppliers.map((row) => ({
-          id: row.id,
-          name: row.supplier_name || '',
-          note: row.note || '',
-          debit: Number(row.debit ?? 0),
-          credit: Number(row.credit ?? 0),
-        }))
-
-        const mappedOrdersSeeded = insertedOrders.map((row) => ({
-          id: row.id,
-          supplierId: row.supplier_id,
-          date: row.date || '',
-          customerName: row.customer_name || '',
-          product: row.product || '',
-          transactionType: row.transaction_type || 'invoice',
-          amountCredit: Number(row.amount_credit ?? 0),
-          amountDebit: Number(row.amount_debit ?? 0),
-        }))
-
-        setSuppliers(mappedSuppliersSeeded)
-        setSupplierOrders(mappedOrdersSeeded)
-      } catch (e) {
-        console.error('Failed to sync suppliers/orders with Supabase', e)
+      if (!data) {
+        setSales([])
+        return
       }
+
+      const mapped = data.map((row) => ({
+        id: row.id,
+        invoiceNo: row.invoice_no || '',
+        customerNo: row.customer_no || '',
+        date: row.date || '',
+        customerName: row.customer_name || '',
+        product: row.product || '',
+        note: row.note || '',
+        total: String(row.total_amount ?? ''),
+        cash: String(row.cash ?? ''),
+        unpaid: String(row.outstanding ?? ''),
+      }))
+      setSales(mapped)
+    } catch (e) {
+      console.error('Failed to sync sales with Supabase', e)
     }
+  }
 
-    syncSuppliersAndOrders()
-  }, [])
+  syncSalesWithSupabase()
+}, [user])
+
+  // sync refunds with Supabase (cloud) when user is known
+useEffect(() => {
+  if (!user?.id) return
+
+  async function syncRefundsWithSupabase() {
+    try {
+      const { data, error } = await supabase
+        .from('refunds')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+
+      if (error) {
+        console.error('Error loading refunds from Supabase', error)
+        return
+      }
+
+      if (!data) {
+        setRefunds([])
+        return
+      }
+
+      const mapped = data.map((row) => ({
+        id: row.id,
+        invoiceNo: row.invoice_no || '',
+        customerNo: row.customer_no || '',
+        date: row.date || '',
+        customerName: row.customer_name || '',
+        product: row.product || '',
+        note: row.note || '',
+        total: Number(row.total_amount ?? 0),
+        cash: Number(row.cash ?? 0),
+        unpaid: Number(row.unpaid ?? 0),
+      }))
+
+      setRefunds(mapped)
+    } catch (e) {
+      console.error('Failed to sync refunds with Supabase', e)
+    }
+  }
+
+  syncRefundsWithSupabase()
+}, [user])
 
 
 
-  // persist
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.sales, JSON.stringify(sales))
-  }, [sales])
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.refunds, JSON.stringify(refunds))
-  }, [refunds])
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.invoiceCounter, String(nextInvoiceNumber))
-  }, [nextInvoiceNumber])
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.customerCounter, String(nextCustomerNumber))
-  }, [nextCustomerNumber])
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.suppliers, JSON.stringify(suppliers))
-  }, [suppliers])
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.supplierOrders, JSON.stringify(supplierOrders))
-  }, [supplierOrders])
+  // sync expenses with Supabase (cloud) when user is known
+useEffect(() => {
+  if (!user?.id) return
 
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.expenses, JSON.stringify(expenses))
-  }, [expenses])
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.changeLog, JSON.stringify(changeLog))
-  }, [changeLog])
+  async function syncExpensesWithSupabase() {
+    try {
+      const { data, error } = await supabase
+        .from('expenses')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('date', { ascending: false })
 
-  useEffect(() => {
-    window.localStorage.setItem(
-      STORAGE_KEYS.cashOpening,
-      String(Number(cashOpeningBalance) || 0),
-    )
-  }, [cashOpeningBalance])
+      if (error) {
+        console.error('Error loading expenses from Supabase', error)
+        return
+      }
+
+      if (!data) {
+        setExpenses([])
+        return
+      }
+
+      const mapped = data.map((row) => ({
+        id: row.id,
+        date: row.date || '',
+        description: row.description || '',
+        note: row.note || '',
+        cash: String(row.cash ?? ''),
+        category: row.category || '',
+      }))
+
+      setExpenses(mapped)
+    } catch (e) {
+      console.error('Failed to sync expenses with Supabase', e)
+    }
+  }
+
+  syncExpensesWithSupabase()
+}, [user])
+
+
+
+
+
+  // sync suppliers and supplier orders with Supabase (cloud) when user is known
+useEffect(() => {
+  if (!user?.id) return
+
+  async function syncSuppliersAndOrders() {
+    try {
+      const [{ data: supData, error: supError }, { data: orderData, error: orderError }] =
+        await Promise.all([
+          supabase
+            .from('suppliers')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: true }),
+          supabase
+            .from('order')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('date', { ascending: true }),
+        ])
+
+      if (supError) {
+        console.error('Error loading suppliers from Supabase', supError)
+      }
+      if (orderError) {
+        console.error('Error loading supplier orders from Supabase', orderError)
+      }
+
+      const suppliersRows = supData || []
+      const ordersRows = orderData || []
+
+      const mappedSuppliers = suppliersRows.map((row) => ({
+        id: row.id,
+        name: row.supplier_name || '',
+        note: row.note || '',
+        debit: Number(row.debit ?? 0),
+        credit: Number(row.credit ?? 0),
+      }))
+
+      const mappedOrders = ordersRows.map((row) => ({
+        id: row.id,
+        supplierId: row.supplier_id,
+        date: row.date || '',
+        customerName: row.customer_name || '',
+        product: row.product || '',
+        transactionType: row.transaction_type || 'invoice',
+        amountCredit: Number(row.amount_credit ?? 0),
+        amountDebit: Number(row.amount_debit ?? 0),
+      }))
+
+      setSuppliers(mappedSuppliers)
+      setSupplierOrders(mappedOrders)
+    } catch (e) {
+      console.error('Failed to sync suppliers/orders with Supabase', e)
+    }
+  }
+
+  syncSuppliersAndOrders()
+}, [user])
 
   // helpers
   function recalcSalesUnpaid(form) {
@@ -669,17 +673,17 @@ function App() {
 
   // navigation helpers (sidebar)
   function handleAuthSuccess(info) {
-    setUser({ email: info.email })
-    setProgramName(info.programName || 'Control console')
-    setProfileForm((prev) => ({
-      ...prev,
-      email: info.email,
-      programName: info.programName || prev.programName,
-    }))
+    // info is expected to be { id, email } from AuthScreen
+    setUser({ id: info.id, email: info.email })
     setActiveView('dashboard')
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    try {
+      await supabase.auth.signOut()
+    } catch (err) {
+      console.error('Error signing out from Supabase', err)
+    }
     setUser(null)
     setActiveView('dashboard')
   }
@@ -691,6 +695,7 @@ function App() {
     setShowSalesImport(false)
     setEditingSale(null)
     setEditingRefund(null)
+    setIsSidebarOpen(false)
   }
 
   function goSalesOverview() {
@@ -698,6 +703,7 @@ function App() {
     setShowSalesForm(false)
     setShowSalesImport(false)
     setEditingSale(null)
+    setIsSidebarOpen(false)
   }
 
   function goSalesNew() {
@@ -732,6 +738,7 @@ function App() {
     setActiveView('returns')
     setShowRefundForm(false)
     setEditingRefund(null)
+    setIsSidebarOpen(false)
   }
 
   function goSuppliersOverview() {
@@ -741,6 +748,7 @@ function App() {
     setShowSupplierOrderForm(false)
     setEditingSupplier(null)
     setEditingSupplierOrder(null)
+    setIsSidebarOpen(false)
   }
 
   function openSupplierDetail(id) {
@@ -857,7 +865,7 @@ function App() {
       if (editingSale) {
         // UPDATE in Supabase
         const payload = {
-          user_id: STATIC_USER_ID,
+          user_id: user.id,
           invoice_no: saleData.invoiceNo,
           customer_no: saleData.customerNo,
           date: saleData.date,
@@ -873,7 +881,7 @@ function App() {
           .from('sales')
           .update(payload)
           .eq('id', editingSale.id)
-          .eq('user_id', STATIC_USER_ID)
+          .eq('user_id', user.id)
 
         if (error) {
           console.error('Fehler beim Aktualisieren der Sale in Supabase', error)
@@ -919,24 +927,25 @@ function App() {
       }
 
       // NEUE Sale in Supabase
-      const payload = {
-        user_id: STATIC_USER_ID,
-        invoice_no: saleData.invoiceNo,
-        customer_no: saleData.customerNo,
-        date: saleData.date,
-        customer_name: saleData.customerName,
-        product: saleData.product,
-        note: saleData.note,
-        total_amount: saleData.total,
-        cash: saleData.cash,
-        outstanding: saleData.unpaid,
-      }
+const payload = {
+  user_id: user.id,
+  invoice_no: saleData.invoiceNo,
+  customer_no: saleData.customerNo,
+  date: saleData.date,
+  customer_name: saleData.customerName,
+  product: saleData.product,
+  note: saleData.note,
+  total_amount: saleData.total,
+  cash: saleData.cash,
+  outstanding: saleData.unpaid,
+}
 
-      const { data, error } = await supabase
-        .from('sales')
-        .insert(payload)
-        .select()
-        .single()
+const { data, error } = await supabase
+  .from('sales')
+  .insert(payload)
+  .select()
+  .single()
+
 
       if (error) {
         console.error('Fehler beim Speichern der Sale in Supabase', error)
@@ -957,15 +966,15 @@ function App() {
         unpaid: String(data.outstanding ?? ''),
       }
 
-      setSales((prev) => [...prev, newSale])
+            setSales((prev) => [...prev, newSale])
 
       const newNextInvoice = nextInvoiceNumber + 1
       const newNextCustomer = nextCustomerNumber + 1
-      setNextInvoiceNumber(newNextInvoice)
-      setNextCustomerNumber(newNextCustomer)
+      await updateCountersInSupabase(newNextInvoice, newNextCustomer)
 
       const newInvoice = `INV-${String(newNextInvoice).padStart(4, '0')}`
       const newCustomer = `C-${String(newNextCustomer).padStart(4, '0')}`
+
 
       setSalesForm(
         recalcSalesUnpaid({
@@ -1034,7 +1043,7 @@ function App() {
     try {
       if (editingRefund) {
         const payload = {
-          user_id: STATIC_USER_ID,
+          user_id: user.id,
           invoice_no: refundData.invoiceNo,
           customer_no: refundData.customerNo,
           date: refundData.date,
@@ -1050,7 +1059,7 @@ function App() {
           .from('refunds')
           .update(payload)
           .eq('id', editingRefund.id)
-          .eq('user_id', STATIC_USER_ID)
+          .eq('user_id', user.id)
 
         if (error) {
           console.error('Fehler beim Aktualisieren der Refund in Supabase', error)
@@ -1094,7 +1103,7 @@ function App() {
         )
       } else {
         const payload = {
-          user_id: STATIC_USER_ID,
+          user_id: user.id,
           invoice_no: refundData.invoiceNo,
           customer_no: refundData.customerNo,
           date: refundData.date,
@@ -1157,9 +1166,15 @@ function App() {
 
 
   async function handleExpenseSubmit(e) {
-    e.preventDefault()
-    const cash = Number(expenseForm.cash) || 0
-    const date = expenseForm.date || getTodayISO()
+  e.preventDefault()
+
+  if (!user?.id) {
+    alert('Kein Benutzer eingeloggt – bitte neu einloggen.')
+    return
+  }
+
+  const cash = Number(expenseForm.cash) || 0
+  const date = expenseForm.date || getTodayISO()
 
     const baseData = {
       date,
@@ -1171,7 +1186,7 @@ function App() {
     try {
       if (editingExpense) {
         const payload = {
-          user_id: STATIC_USER_ID,
+          user_id: user.id,
           date: baseData.date,
           description: baseData.description,
           note: baseData.note,
@@ -1182,7 +1197,7 @@ function App() {
           .from('expenses')
           .update(payload)
           .eq('id', editingExpense.id)
-          .eq('user_id', STATIC_USER_ID)
+          .eq('user_id', user.id)
 
         if (error) {
           console.error('Fehler beim Aktualisieren der Expense in Supabase', error)
@@ -1225,7 +1240,7 @@ function App() {
         )
       } else {
         const payload = {
-          user_id: STATIC_USER_ID,
+          user_id: user.id,
           date: baseData.date,
           description: baseData.description,
           note: baseData.note,
@@ -1277,7 +1292,7 @@ function App() {
         .from('sales')
         .delete()
         .eq('id', id)
-        .eq('user_id', STATIC_USER_ID)
+        .eq('user_id', user.id)
 
       if (error) {
         console.error('Fehler beim Löschen der Sale in Supabase', error)
@@ -1301,7 +1316,7 @@ function App() {
         .from('refunds')
         .delete()
         .eq('id', id)
-        .eq('user_id', STATIC_USER_ID)
+        .eq('user_id', user.id)
 
       if (error) {
         console.error('Fehler beim Löschen der Refund in Supabase', error)
@@ -1336,7 +1351,7 @@ function App() {
         .from('expenses')
         .delete()
         .eq('id', id)
-        .eq('user_id', STATIC_USER_ID)
+        .eq('user_id', user.id)
 
       if (error) {
         console.error('Fehler beim Löschen der Expense in Supabase', error)
@@ -1364,7 +1379,7 @@ function App() {
         .from('suppliers')
         .delete()
         .eq('id', id)
-        .eq('user_id', STATIC_USER_ID)
+        .eq('user_id', user.id)
 
       if (error) {
         console.error('Fehler beim Löschen des Suppliers in Supabase', error)
@@ -1401,7 +1416,12 @@ function openEditSupplierForm(supplier) {
   }
 
     async function handleSupplierSubmit(e) {
-    e.preventDefault()
+  e.preventDefault()
+
+  if (!user?.id) {
+    alert('Kein Benutzer eingeloggt – bitte neu einloggen.')
+    return
+  }
     const { name, note, debit, credit } = supplierForm
 
     if (!name.trim()) {
@@ -1420,7 +1440,7 @@ function openEditSupplierForm(supplier) {
       if (editingSupplier) {
         const oldSupplier = editingSupplier
         const payload = {
-          user_id: STATIC_USER_ID,
+          user_id: user.id,
           supplier_name: base.name,
           note: base.note,
           debit: base.debit,
@@ -1431,7 +1451,7 @@ function openEditSupplierForm(supplier) {
           .from('suppliers')
           .update(payload)
           .eq('id', editingSupplier.id)
-          .eq('user_id', STATIC_USER_ID)
+          .eq('user_id', user.id)
 
         if (error) {
           console.error('Fehler beim Aktualisieren des Suppliers in Supabase', error)
@@ -1476,7 +1496,7 @@ function openEditSupplierForm(supplier) {
         )
       } else {
         const payload = {
-          user_id: STATIC_USER_ID,
+          user_id: user.id,
           supplier_name: base.name,
           note: base.note,
           debit: base.debit,
@@ -1560,7 +1580,7 @@ function openSupplierOrderForm() {
         .from('order')
         .delete()
         .eq('id', id)
-        .eq('user_id', STATIC_USER_ID)
+        .eq('user_id', user.id)
 
       if (error) {
         console.error('Fehler beim Löschen des Supplier-Orders in Supabase', error)
@@ -1576,7 +1596,12 @@ function openSupplierOrderForm() {
   }
 
   async function handleSupplierOrderSubmit(e) {
-    e.preventDefault()
+  e.preventDefault()
+
+  if (!user?.id) {
+    alert('Kein Benutzer eingeloggt – bitte neu einloggen.')
+    return
+  }
     if (!selectedSupplierId) return
 
     const { date, customerName, product, amountCredit, amountDebit, transactionType } =
@@ -1601,7 +1626,7 @@ function openSupplierOrderForm() {
       if (editingSupplierOrder) {
         const oldOrder = editingSupplierOrder
         const payload = {
-          user_id: STATIC_USER_ID,
+          user_id: user.id,
           supplier_id: selectedSupplierId,
           date: data.date,
           customer_name: data.customerName,
@@ -1615,7 +1640,7 @@ function openSupplierOrderForm() {
           .from('order')
           .update(payload)
           .eq('id', editingSupplierOrder.id)
-          .eq('user_id', STATIC_USER_ID)
+          .eq('user_id', user.id)
 
         if (error) {
           console.error('Fehler beim Aktualisieren des Supplier-Orders in Supabase', error)
@@ -1665,7 +1690,7 @@ function openSupplierOrderForm() {
         )
       } else {
         const payload = {
-          user_id: STATIC_USER_ID,
+          user_id: user.id,
           supplier_id: selectedSupplierId,
           date: data.date,
           customer_name: data.customerName,
@@ -1955,7 +1980,7 @@ function handleExportSupplierPDF() {
     const rows = salesImportPreview.rows
 
     const payloads = rows.map((row) => ({
-      user_id: STATIC_USER_ID,
+      user_id: user.id,
       invoice_no: row.invoiceNo,
       customer_no: row.customerNo,
       date: row.date,
@@ -1995,11 +2020,12 @@ function handleExportSupplierPDF() {
       setSales((prev) => [...prev, ...importedSales])
 
       const created = rows.length
-      setNextInvoiceNumber((n) => n + created)
-      setNextCustomerNumber((n) => n + created)
+      const newNextInvoice = nextInvoiceNumber + created
+      const newNextCustomer = nextCustomerNumber + created
+      await updateCountersInSupabase(newNextInvoice, newNextCustomer)
 
       setSalesImportPreview(null)
-      alert(`Imported ${created} sales rows to Supabase.`)
+
     } catch (e) {
       console.error('Unerwarteter Fehler beim Import der Sales', e)
       alert('Unerwarteter Fehler beim Import. Details in der Konsole.')
@@ -2916,12 +2942,33 @@ const headerMeta =
         }
 
 
-  if (!user) {
-    return <AuthScreen onAuthSuccess={handleAuthSuccess} />
-  }
-
+if (authInitializing) {
   return (
     <div className="app-shell">
+      <div className="main-area">
+        <main className="app-main">
+          <section className="view active">
+            <div className="card">
+              <div className="card-header">
+                <h3>Loading...</h3>
+              </div>
+              <div className="card-body">
+                <p>Please wait while we restore your session.</p>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  )
+}
+
+if (!user) {
+  return <AuthScreen onAuthSuccess={handleAuthSuccess} />
+}
+
+return (
+    <div className={`app-shell ${isSidebarOpen ? 'sidebar-open' : ''}`}>
       {/* SIDEBAR LEFT */}
       <aside className="sidebar">
         <div className="sidebar-header">
@@ -3057,9 +3104,24 @@ const headerMeta =
         <div className="sidebar-footer">v1.2 · Local data stored in your browser</div>
       </aside>
 
+      {/* CLICK OUTSIDE BACKDROP (only really visible on mobile) */}
+      <div
+        className="sidebar-backdrop"
+        onClick={() => setIsSidebarOpen(false)}
+      />
+
       {/* MAIN CONTENT RIGHT */}
       <div className="main-area">
         <header className="page-header">
+          {/* Hamburger Button nur auf kleinen Bildschirmen sichtbar (CSS regelt das) */}
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setIsSidebarOpen((prev) => !prev)}
+          >
+            <i className="fa-solid fa-bars" />
+          </button>
+
           <h1>
             <i className={`fa-solid ${headerMeta.icon}`} /> {headerMeta.title}
           </h1>
@@ -3431,72 +3493,217 @@ const headerMeta =
         )}
         
           {activeView === 'profile' && (
-            <section className="view active">
-              <div className="card form-card">
-                <div className="card-header">
-                  <h3>
-                    <i className="fa-solid fa-user-gear" /> Profile &amp; settings
-                  </h3>
-                </div>
-                <div className="card-body">
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault()
-                      const cfg = loadAuthConfig()
-                      if (!cfg) {
-                        alert('No auth configuration found.')
-                        return
-                      }
-                      const nextCfg = {
-                        ...cfg,
-                        email: profileForm.email.trim() || cfg.email,
-                        programName: profileForm.programName.trim() || cfg.programName || 'Control console',
-                      }
-                      saveAuthConfig(nextCfg)
-                      setProgramName(nextCfg.programName)
-                      setUser({ email: nextCfg.email })
-                      alert('Profile updated.')
-                    }}
-                  >
-                    <div className="form-row">
-                      <div className="form-field">
-                        <label>Program name</label>
-                        <div className="input-with-icon">
-                          <i className="fa-solid fa-signature" />
-                          <input
-                            type="text"
-                            value={profileForm.programName}
-                            onChange={(e) =>
-                              setProfileForm((prev) => ({ ...prev, programName: e.target.value }))
-                            }
-                          />
-                        </div>
-                      </div>
-                      <div className="form-field">
-                        <label>Owner email</label>
-                        <div className="input-with-icon">
-                          <i className="fa-solid fa-envelope" />
-                          <input
-                            type="email"
-                            value={profileForm.email}
-                            onChange={(e) =>
-                              setProfileForm((prev) => ({ ...prev, email: e.target.value }))
-                            }
-                          />
-                        </div>
-                      </div>
-                    </div>
-                    <div className="form-actions">
-                      <button type="submit" className="btn-primary">
-                        <i className="fa-solid fa-floppy-disk" />
-                        <span>Save profile</span>
-                      </button>
-                    </div>
-                  </form>
-                </div>
+  <section className="view active">
+    <div className="card form-card">
+      <div className="card-header">
+        <h3>
+          <i className="fa-solid fa-user-gear" /> Profile &amp; settings
+        </h3>
+      </div>
+      <div className="card-body">
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault()
+
+            if (!isAdmin) {
+              alert('Only admin can update profile.')
+              return
+            }
+
+            if (!user?.id) {
+              alert('No logged in user.')
+              return
+            }
+
+            const payload = {
+              user_id: user.id,
+              program_name: profileForm.programName.trim() || 'Control console',
+              owner_email: profileForm.email.trim() || user.email,
+              business_name: profileForm.businessName.trim() || null,
+              phone: profileForm.phone.trim() || null,
+              address: profileForm.address.trim() || null,
+              timezone: profileForm.timezone || 'Europe/Berlin',
+              logo_url: profileForm.logoUrl.trim() || null,
+            }
+
+            try {
+              const { data, error } = await supabase
+                .from('profiles')
+                .upsert(payload, { onConflict: 'user_id' })
+                .select()
+                .single()
+
+              if (error) {
+                console.error('Error saving profile to Supabase', error)
+                alert('Failed to save profile. See console for details.')
+                return
+              }
+
+              setProgramName(data.program_name || 'Control console')
+              setUser((prev) =>
+                prev ? { ...prev, email: data.owner_email || prev.email } : prev,
+              )
+              alert('Profile updated.')
+            } catch (err) {
+              console.error('Unexpected error saving profile', err)
+              alert('Unexpected error while saving profile.')
+            }
+          }}
+        >
+          <div className="form-row">
+            <div className="form-field">
+              <label>Program name</label>
+              <div className="input-with-icon">
+                <i className="fa-solid fa-signature" />
+                <input
+                  type="text"
+                  value={profileForm.programName}
+                  readOnly={!isAdmin}
+                  onChange={(e) => {
+                    if (!isAdmin) return
+                    setProfileForm((prev) => ({
+                      ...prev,
+                      programName: e.target.value,
+                    }))
+                  }}
+                />
               </div>
-            </section>
+            </div>
+
+            <div className="form-field">
+              <label>Owner email</label>
+              <div className="input-with-icon">
+                <i className="fa-solid fa-envelope" />
+                <input
+                  type="email"
+                  value={profileForm.email}
+                  readOnly={!isAdmin}
+                  onChange={(e) => {
+                    if (!isAdmin) return
+                    setProfileForm((prev) => ({
+                      ...prev,
+                      email: e.target.value,
+                    }))
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-field">
+              <label>Business name</label>
+              <div className="input-with-icon">
+                <i className="fa-solid fa-building" />
+                <input
+                  type="text"
+                  value={profileForm.businessName}
+                  readOnly={!isAdmin}
+                  onChange={(e) => {
+                    if (!isAdmin) return
+                    setProfileForm((prev) => ({
+                      ...prev,
+                      businessName: e.target.value,
+                    }))
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="form-field">
+              <label>Phone</label>
+              <div className="input-with-icon">
+                <i className="fa-solid fa-phone" />
+                <input
+                  type="tel"
+                  value={profileForm.phone}
+                  readOnly={!isAdmin}
+                  onChange={(e) => {
+                    if (!isAdmin) return
+                    setProfileForm((prev) => ({
+                      ...prev,
+                      phone: e.target.value,
+                    }))
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-field">
+              <label>Address</label>
+              <div className="input-with-icon">
+                <i className="fa-solid fa-location-dot" />
+                <input
+                  type="text"
+                  value={profileForm.address}
+                  readOnly={!isAdmin}
+                  onChange={(e) => {
+                    if (!isAdmin) return
+                    setProfileForm((prev) => ({
+                      ...prev,
+                      address: e.target.value,
+                    }))
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="form-field">
+              <label>Timezone</label>
+              <div className="input-with-icon">
+                <i className="fa-solid fa-globe" />
+                <input
+                  type="text"
+                  value={profileForm.timezone}
+                  readOnly={!isAdmin}
+                  onChange={(e) => {
+                    if (!isAdmin) return
+                    setProfileForm((prev) => ({
+                      ...prev,
+                      timezone: e.target.value,
+                    }))
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-field">
+              <label>Logo URL (optional)</label>
+              <div className="input-with-icon">
+                <i className="fa-solid fa-image" />
+                <input
+                  type="text"
+                  value={profileForm.logoUrl}
+                  readOnly={!isAdmin}
+                  onChange={(e) => {
+                    if (!isAdmin) return
+                    setProfileForm((prev) => ({
+                      ...prev,
+                      logoUrl: e.target.value,
+                    }))
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {isAdmin && (
+            <div className="form-actions">
+              <button type="submit" className="btn-primary">
+                <i className="fa-solid fa-floppy-disk" />
+                <span>Save profile</span>
+              </button>
+            </div>
           )}
+        </form>
+      </div>
+    </div>
+  </section>
+)}
           <datalist id="customer-options">
             {customerNameSuggestions.map((name) => (
               <option key={name} value={name} />

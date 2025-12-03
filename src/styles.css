@@ -210,6 +210,10 @@ body {
 }
 
 /* Buttons */
+
+.sidebar-toggle {
+  display: none;
+}
 .btn-primary,
 .btn-ghost {
   border-radius: 999px;
@@ -598,47 +602,66 @@ td.actions {
 }
 
 /* Responsive */
+
+/* Responsive layout: sidebar becomes slide-in drawer on small screens */
 @media (max-width: 900px) {
   .app-shell {
-    flex-direction: column;
+    position: relative;
+    min-height: 100vh;
   }
+
   .sidebar {
-    width: 100%;
-    flex-direction: row;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 12px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 260px;
+    max-width: 80%;
+    background: #ffffff;
+    transform: translateX(-100%);
+    transition: transform var(--transition-med);
+    z-index: 1000;
   }
-  .sidebar-header {
-    margin-bottom: 0;
-    padding-bottom: 0;
-    border-bottom: none;
-    border-right: 1px solid #e5e7eb;
-    padding-right: 12px;
+
+  .app-shell.sidebar-open .sidebar {
+    transform: translateX(0);
   }
-  .sidebar-nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-    margin-left: 12px;
-  }
-  .sidebar-item {
-    padding-inline: 10px;
-  }
-  .sidebar-section-label,
-  .sidebar-footer {
-    display: none;
-  }
+
   .main-area {
     padding: 14px 14px 18px;
   }
+
   .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
   .form-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-}
 
+  /* show hamburger button on small screens */
+  .sidebar-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    padding: 4px 8px;
+    margin-right: 8px;
+    cursor: pointer;
+    font-size: 18px;
+  }
+
+  .page-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .page-header h1 {
+    margin: 0;
+  }
+}
 @media (max-width: 640px) {
   .summary-grid {
     grid-template-columns: 1fr;
@@ -736,4 +759,28 @@ td.actions {
 .history-item li {
   font-size: 13px;
   line-height: 1.4;
+}
+
+
+/* Backdrop hinter der Sidebar für Mobile, klick schließt Sidebar */
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.35);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--transition-med);
+    z-index: 900;
+  }
+
+  .app-shell.sidebar-open .sidebar-backdrop {
+    display: block;
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
