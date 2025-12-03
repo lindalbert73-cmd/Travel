@@ -695,7 +695,7 @@ useEffect(() => {
     setShowSalesImport(false)
     setEditingSale(null)
     setEditingRefund(null)
-    setIsSidebarOpen(false)
+     setIsSidebarOpen(false)
   }
 
   function goSalesOverview() {
@@ -703,7 +703,7 @@ useEffect(() => {
     setShowSalesForm(false)
     setShowSalesImport(false)
     setEditingSale(null)
-    setIsSidebarOpen(false)
+     setIsSidebarOpen(false)
   }
 
   function goSalesNew() {
@@ -738,7 +738,7 @@ useEffect(() => {
     setActiveView('returns')
     setShowRefundForm(false)
     setEditingRefund(null)
-    setIsSidebarOpen(false)
+     setIsSidebarOpen(false)
   }
 
   function goSuppliersOverview() {
@@ -748,7 +748,7 @@ useEffect(() => {
     setShowSupplierOrderForm(false)
     setEditingSupplier(null)
     setEditingSupplierOrder(null)
-    setIsSidebarOpen(false)
+     setIsSidebarOpen(false)
   }
 
   function openSupplierDetail(id) {
@@ -841,8 +841,17 @@ useEffect(() => {
   // submit handlers
   async function handleSalesSubmit(e) {
     e.preventDefault()
-    const { invoiceNo, customerNo, date, customerName, product, total, cash, unpaid, note } =
+    const { date, customerName, product, total, cash, unpaid, note } =
       salesForm
+
+    let invoiceNo = salesForm.invoiceNo
+    let customerNo = salesForm.customerNo
+
+    if (!editingSale) {
+      invoiceNo = `INV-${String(nextInvoiceNumber).padStart(4, '0')}`
+      customerNo = `C-${String(nextCustomerNumber).padStart(4, '0')}`
+    }
+
 
     if (!customerName.trim() || !product.trim() || !date) {
       alert('Please fill in all required fields.')
@@ -1979,18 +1988,28 @@ function handleExportSupplierPDF() {
 
     const rows = salesImportPreview.rows
 
-    const payloads = rows.map((row) => ({
-      user_id: user.id,
-      invoice_no: row.invoiceNo,
-      customer_no: row.customerNo,
-      date: row.date,
-      customer_name: row.customerName,
-      product: row.product,
-      note: row.note || '',
-      total_amount: Number(row.total) || 0,
-      cash: Number(row.cash) || 0,
-      outstanding: Number(row.unpaid) || 0,
-    }))
+    let invoiceCounter = nextInvoiceNumber
+    let customerCounter = nextCustomerNumber
+
+    const payloads = rows.map((row) => {
+      const invoiceNo = `INV-${String(invoiceCounter).padStart(4, '0')}`
+      const customerNo = `C-${String(customerCounter).padStart(4, '0')}`
+      invoiceCounter += 1
+      customerCounter += 1
+
+      return {
+        user_id: user.id,
+        invoice_no: invoiceNo,
+        customer_no: customerNo,
+        date: row.date,
+        customer_name: row.customerName,
+        product: row.product,
+        note: row.note || '',
+        total_amount: Number(row.total) || 0,
+        cash: Number(row.cash) || 0,
+        outstanding: Number(row.unpaid) || 0,
+      }
+    })
 
     try {
       const { data, error } = await supabase
@@ -2941,6 +2960,17 @@ const headerMeta =
           subtitle: 'Orders and balance for the selected supplier.',
         }
 
+const effectiveHeaderMeta =
+  activeView === 'profile'
+    ? {
+        icon: 'fa-user-gear',
+        title: 'Profile & settings',
+        subtitle: 'Manage program name, business details and logo.',
+      }
+    : headerMeta
+
+
+
 
 if (authInitializing) {
   return (
@@ -3018,14 +3048,20 @@ return (
 <nav className="sidebar-nav">
   <button
     className={`sidebar-item ${activeView === 'customersReceivable' ? 'active' : ''}`}
-    onClick={() => setActiveView('customersReceivable')}
+    onClick={() => {
+    setActiveView('customersReceivable')
+    setIsSidebarOpen(false)
+  }}
   >
     <i className="fa-solid fa-user-check" />
     <span>Customers receivable</span>
   </button>
   <button
     className={`sidebar-item ${activeView === 'customersPayable' ? 'active' : ''}`}
-    onClick={() => setActiveView('customersPayable')}
+    onClick={() => {
+    setActiveView('customersPayable')
+    setIsSidebarOpen(false)
+  }}
   >
     <i className="fa-solid fa-user-minus" />
     <span>Customers payable</span>
@@ -3036,7 +3072,10 @@ return (
 <nav className="sidebar-nav">
   <button
     className={`sidebar-item ${activeView === 'expenses' ? 'active' : ''}`}
-    onClick={() => setActiveView('expenses')}
+    onClick={() => {
+    setActiveView('expenses')
+    setIsSidebarOpen(false)
+  }}
   >
     <i className="fa-solid fa-wallet" />
     <span>Expenses</span>
@@ -3047,7 +3086,10 @@ return (
 <nav className="sidebar-nav">
   <button
     className={`sidebar-item ${activeView === 'cashLedger' ? 'active' : ''}`}
-    onClick={() => setActiveView('cashLedger')}
+    onClick={() => {
+    setActiveView('cashLedger')
+    setIsSidebarOpen(false)
+  }}
   >
     <i className="fa-solid fa-sack-dollar" />
     <span>Cash ledger</span>
@@ -3058,7 +3100,10 @@ return (
 <nav className="sidebar-nav">
   <button
     className={`sidebar-item ${activeView === 'reports' ? 'active' : ''}`}
-    onClick={() => setActiveView('reports')}
+    onClick={() => {
+    setActiveView('reports')
+    setIsSidebarOpen(false)
+  }}
   >
     <i className="fa-solid fa-file-pdf" />
     <span>Reports / PDF</span>
@@ -3082,7 +3127,10 @@ return (
 <nav className="sidebar-nav">
   <button
     className={`sidebar-item ${activeView === 'profile' ? 'active' : ''}`}
-    onClick={() => setActiveView('profile')}
+    onClick={() => {
+    setActiveView('profile')
+    setIsSidebarOpen(false)
+  }}
   >
     <i className="fa-solid fa-user" />
     <span>Profile</span>
@@ -3104,7 +3152,7 @@ return (
         <div className="sidebar-footer">v1.2 · Local data stored in your browser</div>
       </aside>
 
-      {/* CLICK OUTSIDE BACKDROP (only really visible on mobile) */}
+      {/* CLICK OUTSIDE BACKDROP (mobile) */}
       <div
         className="sidebar-backdrop"
         onClick={() => setIsSidebarOpen(false)}
@@ -3113,7 +3161,7 @@ return (
       {/* MAIN CONTENT RIGHT */}
       <div className="main-area">
         <header className="page-header">
-          {/* Hamburger Button nur auf kleinen Bildschirmen sichtbar (CSS regelt das) */}
+          {/* Mobile sidebar toggle */}
           <button
             type="button"
             className="sidebar-toggle"
@@ -3123,9 +3171,9 @@ return (
           </button>
 
           <h1>
-            <i className={`fa-solid ${headerMeta.icon}`} /> {headerMeta.title}
+            <i className={`fa-solid ${effectiveHeaderMeta.icon}`} /> {effectiveHeaderMeta.title}
           </h1>
-          <p>{headerMeta.subtitle}</p>
+          <p>{effectiveHeaderMeta.subtitle}</p>
         </header>
 
         <main className="app-main">
