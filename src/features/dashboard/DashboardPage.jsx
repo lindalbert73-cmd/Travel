@@ -18,7 +18,7 @@ function DashboardPage({
                     <i className="fa-solid fa-sack-dollar" />
                   </div>
                   <div className="summary-text">
-                    <span>Total cash (closing balance)</span>
+                    <span>Total cash </span>
                     <strong>{cashLedgerTotalsAll.closingBalance}</strong>
                   </div>
                 </div>
@@ -29,7 +29,7 @@ function DashboardPage({
                     <i className="fa-solid fa-user-check" />
                   </div>
                   <div className="summary-text">
-                    <span>Customers receivable (total outstanding)</span>
+                    <span>Customers receivable </span>
                     <strong>{dashboardReceivableTotal}</strong>
                   </div>
                 </div>
@@ -40,7 +40,7 @@ function DashboardPage({
                     <i className="fa-solid fa-user-minus" />
                   </div>
                   <div className="summary-text">
-                    <span>Customers payable (still payable)</span>
+                    <span>Customers payable </span>
                     <strong>{dashboardCustomerPayablesTotal}</strong>
                   </div>
                 </div>

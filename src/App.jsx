@@ -19,7 +19,7 @@ import { loadAuthConfig, saveAuthConfig } from './utils/authConfig'
 
 
 
-const ADMIN_EMAIL = 'lindalbert73@gmail.com'
+
 
 const COMMON_PRODUCTS = [
   'Ticket Flight',
@@ -43,7 +43,14 @@ const COMMON_PRODUCTS = [
 
 
 function App() {
+  const SESSION_TIMEOUT_SECONDS = 10 * 60
+  const [secondsLeft, setSecondsLeft] = useState(SESSION_TIMEOUT_SECONDS)
+  const inactivityIntervalRef = useRef(null)
+
   const [user, setUser] = useState(null)
+  const [role, setRole] = useState('user')       // NEU
+  const isAdmin = role === 'admin'               // NEU
+
   const [authInitializing, setAuthInitializing] = useState(true)
   const [programName, setProgramName] = useState('Control console')
   const [profileForm, setProfileForm] = useState({
@@ -56,7 +63,7 @@ function App() {
     logoUrl: '',
   })
 
-  const isAdmin = user?.email === ADMIN_EMAIL
+  
 
   const [activeView, setActiveView] = useState('dashboard')
   const [sales, setSales] = useState([])
@@ -346,36 +353,59 @@ useEffect(() => {
   }
 }, [])
 
-// automatic logout after 10 minutes of inactivity
+// sichtbarer Auto-Logout-Timer: 10 Minuten Inaktivität
 useEffect(() => {
-  if (!user) return
+  if (!user) {
+    // kein User eingeloggt → kein Timer
+    setSecondsLeft(0)
+    if (inactivityIntervalRef.current) {
+      clearInterval(inactivityIntervalRef.current)
+      inactivityIntervalRef.current = null
+    }
+    return
+  }
 
-  let timeoutId
+  // sobald der User eingeloggt ist, starten wir bei 10:00
+  setSecondsLeft(SESSION_TIMEOUT_SECONDS)
 
   const ACTIVITY_EVENTS = ['mousemove', 'keydown', 'click', 'scroll']
 
   const resetTimer = () => {
-    if (timeoutId) {
-      clearTimeout(timeoutId)
-    }
-    timeoutId = setTimeout(() => {
-      handleLogout()
-    }, 10 * 60 * 1000) // 10 minutes
+    setSecondsLeft(SESSION_TIMEOUT_SECONDS)
   }
 
+  // Activity-Events anhängen
   ACTIVITY_EVENTS.forEach((eventName) => {
     window.addEventListener(eventName, resetTimer)
   })
 
-  resetTimer()
+  // Falls es noch einen alten Interval gibt, aufräumen
+  if (inactivityIntervalRef.current) {
+    clearInterval(inactivityIntervalRef.current)
+  }
 
+  // Jede Sekunde runterzählen
+  inactivityIntervalRef.current = setInterval(() => {
+    setSecondsLeft((prev) => {
+      if (prev <= 1) {
+        clearInterval(inactivityIntervalRef.current)
+        inactivityIntervalRef.current = null
+        handleLogout()
+        return 0
+      }
+      return prev - 1
+    })
+  }, 1000)
+
+  // Cleanup
   return () => {
-    if (timeoutId) {
-      clearTimeout(timeoutId)
-    }
     ACTIVITY_EVENTS.forEach((eventName) => {
       window.removeEventListener(eventName, resetTimer)
     })
+    if (inactivityIntervalRef.current) {
+      clearInterval(inactivityIntervalRef.current)
+      inactivityIntervalRef.current = null
+    }
   }
 }, [user])
 
@@ -384,61 +414,68 @@ useEffect(() => {
 
 
 // load profile from Supabase whenever we have a logged-in user
-  useEffect(() => {
-    if (!user || !user.id) return
+useEffect(() => {
+  if (!user || !user.id) {
+    setRole('user')          // NEU: wenn kein User, sicherheitshalber wieder user
+    return
+  }
 
-    let cancelled = false
+  let cancelled = false
 
-    async function loadProfile() {
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('user_id', user.id)
-          .maybeSingle()
+  async function loadProfile() {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle()
 
-        if (error) {
-          console.error('Error loading profile from Supabase', error)
-          return
-        }
-
-        if (cancelled) return
-
-        if (!data) {
-          setProfileForm((prev) => ({
-            ...prev,
-            programName: 'Control console',
-            email: user.email || '',
-            businessName: '',
-            phone: '',
-            address: '',
-            timezone: 'Europe/Berlin',
-            logoUrl: '',
-          }))
-          setProgramName('Control console')
-        } else {
-          setProfileForm({
-            programName: data.program_name || 'Control console',
-            email: data.owner_email || user.email || '',
-            businessName: data.business_name || '',
-            phone: data.phone || '',
-            address: data.address || '',
-            timezone: data.timezone || 'Europe/Berlin',
-            logoUrl: data.logo_url || '',
-          })
-          setProgramName(data.program_name || 'Control console')
-        }
-      } catch (err) {
-        console.error('Unexpected error loading profile', err)
+      if (error) {
+        console.error('Error loading profile from Supabase', error)
+        return
       }
-    }
 
-    loadProfile()
+      if (cancelled) return
 
-    return () => {
-      cancelled = true
+      if (!data) {
+        setRole('user')      // NEU: kein Profil -> keine Admin-Rechte
+        setProfileForm((prev) => ({
+          ...prev,
+          programName: 'Control console',
+          email: user.email || '',
+          businessName: '',
+          phone: '',
+          address: '',
+          timezone: 'Europe/Berlin',
+          logoUrl: '',
+        }))
+        setProgramName('Control console')
+      } else {
+        setRole(data.role || 'user')   // NEU: Rolle aus DB übernehmen
+
+        setProfileForm({
+          programName: data.program_name || 'Control console',
+          email: data.owner_email || user.email || '',
+          businessName: data.business_name || '',
+          phone: data.phone || '',
+          address: data.address || '',
+          timezone: data.timezone || 'Europe/Berlin',
+          logoUrl: data.logo_url || '',
+        })
+        setProgramName(data.program_name || 'Control console')
+      }
+    } catch (err) {
+      console.error('Unexpected error loading profile', err)
     }
-  }, [user])
+  }
+
+  loadProfile()
+
+  return () => {
+    cancelled = true
+  }
+}, [user])
+
 
  // sync sales with Supabase (cloud) when user is known
 useEffect(() => {
@@ -839,170 +876,168 @@ useEffect(() => {
   }
 
   // submit handlers
-  async function handleSalesSubmit(e) {
-    e.preventDefault()
-    const { date, customerName, product, total, cash, unpaid, note } =
-      salesForm
+async function handleSalesSubmit(e) {
+  e.preventDefault()
+  const { date, customerName, product, total, cash, unpaid, note } =
+    salesForm
 
-    let invoiceNo = salesForm.invoiceNo
-    let customerNo = salesForm.customerNo
+  let invoiceNo = salesForm.invoiceNo
+  let customerNo = salesForm.customerNo
 
-    if (!editingSale) {
-      invoiceNo = `INV-${String(nextInvoiceNumber).padStart(4, '0')}`
-      customerNo = `C-${String(nextCustomerNumber).padStart(4, '0')}`
-    }
+  if (!editingSale) {
+    invoiceNo = `INV-${String(nextInvoiceNumber).padStart(4, '0')}`
+    customerNo = `C-${String(nextCustomerNumber).padStart(4, '0')}`
+  }
 
+  if (!customerName.trim() || !product.trim() || !date) {
+    alert('Please fill in all required fields.')
+    return
+  }
 
-    if (!customerName.trim() || !product.trim() || !date) {
-      alert('Please fill in all required fields.')
+  const saleData = {
+    invoiceNo,
+    customerNo,
+    date,
+    customerName: customerName.trim(),
+    product: product.trim(),
+    total: Number(total) || 0,
+    cash: Number(cash) || 0,
+    unpaid: Number(unpaid) || 0,
+    note: note ? note.trim() : '',
+  }
+
+  try {
+    if (editingSale) {
+      // UPDATE in Supabase
+      const payload = {
+        user_id: user.id,
+        invoice_no: saleData.invoiceNo,
+        customer_no: saleData.customerNo,
+        date: saleData.date,
+        customer_name: saleData.customerName,
+        product: saleData.product,
+        note: saleData.note,
+        total_amount: saleData.total,
+        cash: saleData.cash,
+        outstanding: saleData.unpaid,
+      }
+
+      const { error } = await supabase
+        .from('sales')
+        .update(payload)
+        .eq('id', editingSale.id)
+        .eq('user_id', user.id)
+
+      if (error) {
+        console.error('Fehler beim Aktualisieren der Sale in Supabase', error)
+        alert('Fehler beim Speichern der Änderung (Supabase). Details in der Konsole.')
+        return
+      }
+
+      // Change-Log behalten
+      const oldSale = editingSale
+      const updatedSale = { ...oldSale, ...saleData }
+
+      const fieldsToTrack = ['date', 'customerName', 'product', 'total', 'cash', 'unpaid', 'note']
+      const changes = []
+
+      fieldsToTrack.forEach((field) => {
+        const oldValue = oldSale[field]
+        const newValue = updatedSale[field]
+        if (String(oldValue ?? '') !== String(newValue ?? '')) {
+          changes.push({ field, oldValue, newValue })
+        }
+      })
+
+      if (changes.length) {
+        setChangeLog((prev) => {
+          const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
+          return [
+            ...prev,
+            {
+              id: nextId,
+              entityType: 'sale',
+              entityId: oldSale.id,
+              invoiceNo: oldSale.invoiceNo,
+              changedAt: new Date().toISOString(),
+              changes,
+            },
+          ]
+        })
+      }
+
+      setSales((prev) => prev.map((s) => (s.id === editingSale.id ? { ...s, ...saleData } : s)))
+      setEditingSale(null)
       return
     }
 
-    const saleData = {
-      invoiceNo,
-      customerNo,
-      date,
-      customerName: customerName.trim(),
-      product: product.trim(),
-      total: Number(total) || 0,
-      cash: Number(cash) || 0,
-      unpaid: Number(unpaid) || 0,
-      note: note ? note.trim() : '',
+    // NEUE Sale in Supabase
+    const payload = {
+      user_id: user.id,
+      invoice_no: saleData.invoiceNo,
+      customer_no: saleData.customerNo,
+      date: saleData.date,
+      customer_name: saleData.customerName,
+      product: saleData.product,
+      note: saleData.note,
+      total_amount: saleData.total,
+      cash: saleData.cash,
+      outstanding: saleData.unpaid,
     }
 
-    try {
-      if (editingSale) {
-        // UPDATE in Supabase
-        const payload = {
-          user_id: user.id,
-          invoice_no: saleData.invoiceNo,
-          customer_no: saleData.customerNo,
-          date: saleData.date,
-          customer_name: saleData.customerName,
-          product: saleData.product,
-          note: saleData.note,
-          total_amount: saleData.total,
-          cash: saleData.cash,
-          outstanding: saleData.unpaid,
-        }
+    const { data, error } = await supabase
+      .from('sales')
+      .insert(payload)
+      .select()
+      .single()
 
-        const { error } = await supabase
-          .from('sales')
-          .update(payload)
-          .eq('id', editingSale.id)
-          .eq('user_id', user.id)
+    if (error) {
+      console.error('Fehler beim Speichern der Sale in Supabase', error)
+      alert('Fehler beim Speichern. Details in der Konsole.')
+      return
+    }
 
-        if (error) {
-          console.error('Fehler beim Aktualisieren der Sale in Supabase', error)
-          alert('Fehler beim Speichern der Änderung (Supabase). Details in der Konsole.')
-          return
-        }
+    const newSale = {
+      id: data.id,
+      invoiceNo: data.invoice_no || '',
+      customerNo: data.customer_no || '',
+      date: data.date || '',
+      customerName: data.customer_name || '',
+      product: data.product || '',
+      note: data.note || '',
+      total: String(data.total_amount ?? ''),
+      cash: String(data.cash ?? ''),
+      unpaid: String(data.outstanding ?? ''),
+    }
 
-        // Change-Log behalten
-        const oldSale = editingSale
-        const updatedSale = { ...oldSale, ...saleData }
+    setSales((prev) => [...prev, newSale])
 
-        const fieldsToTrack = ['date', 'customerName', 'product', 'total', 'cash', 'unpaid', 'note']
-        const changes = []
+    const newNextInvoice = nextInvoiceNumber + 1
+    const newNextCustomer = nextCustomerNumber + 1
+    await updateCountersInSupabase(newNextInvoice, newNextCustomer)
 
-        fieldsToTrack.forEach((field) => {
-          const oldValue = oldSale[field]
-          const newValue = updatedSale[field]
-          if (String(oldValue ?? '') !== String(newValue ?? '')) {
-            changes.push({ field, oldValue, newValue })
-          }
-        })
+    const newInvoice = `INV-${String(newNextInvoice).padStart(4, '0')}`
+    const newCustomer = `C-${String(newNextCustomer).padStart(4, '0')}`
 
-        if (changes.length) {
-          setChangeLog((prev) => {
-            const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
-            return [
-              ...prev,
-              {
-                id: nextId,
-                entityType: 'sale',
-                entityId: oldSale.id,
-                invoiceNo: oldSale.invoiceNo,
-                changedAt: new Date().toISOString(),
-                changes,
-              },
-            ]
-          })
-        }
-
-        setSales((prev) => prev.map((s) => (s.id === editingSale.id ? { ...s, ...saleData } : s)))
-        setEditingSale(null)
-        return
-      }
-
-      // NEUE Sale in Supabase
-const payload = {
-  user_id: user.id,
-  invoice_no: saleData.invoiceNo,
-  customer_no: saleData.customerNo,
-  date: saleData.date,
-  customer_name: saleData.customerName,
-  product: saleData.product,
-  note: saleData.note,
-  total_amount: saleData.total,
-  cash: saleData.cash,
-  outstanding: saleData.unpaid,
+    setSalesForm(
+      recalcSalesUnpaid({
+        invoiceNo: newInvoice,
+        customerNo: newCustomer,
+        date: getTodayISO(),
+        customerName: '',
+        product: '',
+        total: '',
+        cash: '',
+        unpaid: '',
+        note: '',
+      }),
+    )
+  } catch (err) {
+    console.error('Unerwarteter Fehler in handleSalesSubmit', err)
+    alert('Unerwarteter Fehler beim Speichern. Details in der Konsole.')
+  }
 }
 
-const { data, error } = await supabase
-  .from('sales')
-  .insert(payload)
-  .select()
-  .single()
-
-
-      if (error) {
-        console.error('Fehler beim Speichern der Sale in Supabase', error)
-        alert('Fehler beim Speichern. Details in der Konsole.')
-        return
-      }
-
-      const newSale = {
-        id: data.id,
-        invoiceNo: data.invoice_no || '',
-        customerNo: data.customer_no || '',
-        date: data.date || '',
-        customerName: data.customer_name || '',
-        product: data.product || '',
-        note: data.note || '',
-        total: String(data.total_amount ?? ''),
-        cash: String(data.cash ?? ''),
-        unpaid: String(data.outstanding ?? ''),
-      }
-
-            setSales((prev) => [...prev, newSale])
-
-      const newNextInvoice = nextInvoiceNumber + 1
-      const newNextCustomer = nextCustomerNumber + 1
-      await updateCountersInSupabase(newNextInvoice, newNextCustomer)
-
-      const newInvoice = `INV-${String(newNextInvoice).padStart(4, '0')}`
-      const newCustomer = `C-${String(newNextCustomer).padStart(4, '0')}`
-
-
-      setSalesForm(
-        recalcSalesUnpaid({
-          invoiceNo: newInvoice,
-          customerNo: newCustomer,
-          date: getTodayISO(),
-          customerName: '',
-          product: '',
-          total: '',
-          cash: '',
-          unpaid: '',
-          note: '',
-        }),
-      )
-    } catch (err) {
-      console.error('Unerwarteter Fehler in handleSalesSubmit', err)
-      alert('Unerwarteter Fehler beim Speichern. Details in der Konsole.')
-    }
-  }
 
   function handleRefundInvoiceChange(invoiceNo) {
     const sale = sales.find((s) => s.invoiceNo === invoiceNo)
@@ -1984,72 +2019,77 @@ function handleExportSupplierPDF() {
   }
 
   async function confirmSalesImport() {
-    if (!salesImportPreview || !salesImportPreview.rows?.length) return
+  // Wenn keine Preview vorhanden ist, abbrechen
+  if (!salesImportPreview || !salesImportPreview.rows?.length) return
 
-    const rows = salesImportPreview.rows
+  const rows = salesImportPreview.rows
 
-    let invoiceCounter = nextInvoiceNumber
-    let customerCounter = nextCustomerNumber
+  // Lokale Zähler aus den globalen Countern
+  let invoiceCounter = nextInvoiceNumber
+  let customerCounter = nextCustomerNumber
 
-    const payloads = rows.map((row) => {
-      const invoiceNo = `INV-${String(invoiceCounter).padStart(4, '0')}`
-      const customerNo = `C-${String(customerCounter).padStart(4, '0')}`
-      invoiceCounter += 1
-      customerCounter += 1
+  // Für jede Zeile im Import NEUE Nummern vergeben
+  const payloads = rows.map((row) => {
+    const invoiceNo = `INV-${String(invoiceCounter).padStart(4, '0')}`
+    const customerNo = `C-${String(customerCounter).padStart(4, '0')}`
+    invoiceCounter += 1
+    customerCounter += 1
 
-      return {
-        user_id: user.id,
-        invoice_no: invoiceNo,
-        customer_no: customerNo,
-        date: row.date,
-        customer_name: row.customerName,
-        product: row.product,
-        note: row.note || '',
-        total_amount: Number(row.total) || 0,
-        cash: Number(row.cash) || 0,
-        outstanding: Number(row.unpaid) || 0,
-      }
-    })
-
-    try {
-      const { data, error } = await supabase
-        .from('sales')
-        .insert(payloads)
-        .select()
-
-      if (error) {
-        console.error('Fehler beim Import der Sales in Supabase', error)
-        alert('Fehler beim Import in die Datenbank. Details in der Konsole.')
-        return
-      }
-
-      const importedSales = data.map((row) => ({
-        id: row.id,
-        invoiceNo: row.invoice_no || '',
-        customerNo: row.customer_no || '',
-        date: row.date || '',
-        customerName: row.customer_name || '',
-        product: row.product || '',
-        note: row.note || '',
-        total: String(row.total_amount ?? ''),
-        cash: String(row.cash ?? ''),
-        unpaid: String(row.outstanding ?? ''),
-      }))
-
-      setSales((prev) => [...prev, ...importedSales])
-
-      const created = rows.length
-      const newNextInvoice = nextInvoiceNumber + created
-      const newNextCustomer = nextCustomerNumber + created
-      await updateCountersInSupabase(newNextInvoice, newNextCustomer)
-
-      setSalesImportPreview(null)
-
-    } catch (e) {
-      console.error('Unerwarteter Fehler beim Import der Sales', e)
-      alert('Unerwarteter Fehler beim Import. Details in der Konsole.')
+    return {
+      user_id: user.id,
+      invoice_no: invoiceNo,
+      customer_no: customerNo,
+      date: row.date,
+      customer_name: row.customerName,
+      product: row.product,
+      note: row.note || '',
+      total_amount: Number(row.total) || 0,
+      cash: Number(row.cash) || 0,
+      outstanding: Number(row.unpaid) || 0,
     }
+  })
+
+  try {
+    const { data, error } = await supabase
+      .from('sales')
+      .insert(payloads)
+      .select()
+
+    if (error) {
+      console.error('Fehler beim Import der Sales in Supabase', error)
+      alert('Fehler beim Import in die Datenbank. Details in der Konsole.')
+      return
+    }
+
+    const importedSales = data.map((row) => ({
+      id: row.id,
+      invoiceNo: row.invoice_no || '',
+      customerNo: row.customer_no || '',
+      date: row.date || '',
+      customerName: row.customer_name || '',
+      product: row.product || '',
+      note: row.note || '',
+      total: String(row.total_amount ?? ''),
+      cash: String(row.cash ?? ''),
+      unpaid: String(row.outstanding ?? ''),
+    }))
+
+    setSales((prev) => [...prev, ...importedSales])
+
+    // Counter um die Anzahl der importierten Zeilen erhöhen
+    const created = rows.length
+    const newNextInvoice = nextInvoiceNumber + created
+    const newNextCustomer = nextCustomerNumber + created
+    await updateCountersInSupabase(newNextInvoice, newNextCustomer)
+
+    // Preview schließen
+    setSalesImportPreview(null)
+  } catch (e) {
+    console.error('Unerwarteter Fehler beim Import der Sales', e)
+    alert('Unerwarteter Fehler beim Import. Details in der Konsole.')
   }
+}
+
 
   function cancelSalesImport() {
     if (!salesImportPreview) return
@@ -2904,7 +2944,7 @@ const headerMeta =
       ? {
           icon: 'fa-grid-2',
           title: 'Dashboard',
-          subtitle: 'High-level overview of sales and refunds.',
+          subtitle: 'High-level financial overview.',
         }
       : activeView === 'sales'
       ? {
@@ -2969,29 +3009,17 @@ const effectiveHeaderMeta =
       }
     : headerMeta
 
-
-
+function formatSecondsToMMSS(totalSeconds) {
+  const s = Math.max(0, totalSeconds || 0)
+  const minutes = Math.floor(s / 60)
+  const seconds = s % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
 
 if (authInitializing) {
-  return (
-    <div className="app-shell">
-      <div className="main-area">
-        <main className="app-main">
-          <section className="view active">
-            <div className="card">
-              <div className="card-header">
-                <h3>Loading...</h3>
-              </div>
-              <div className="card-body">
-                <p>Please wait while we restore your session.</p>
-              </div>
-            </div>
-          </section>
-        </main>
-      </div>
-    </div>
-  )
+  return null
 }
+
 
 if (!user) {
   return <AuthScreen onAuthSuccess={handleAuthSuccess} />
@@ -3159,131 +3187,164 @@ return (
       />
 
       {/* MAIN CONTENT RIGHT */}
-      <div className="main-area">
-        <header className="page-header">
-          {/* Mobile sidebar toggle */}
-          <button
-            type="button"
-            className="sidebar-toggle"
-            onClick={() => setIsSidebarOpen((prev) => !prev)}
-          >
-            <i className="fa-solid fa-bars" />
-          </button>
+<div className="main-area">
+  <header className="page-header">
+    {/* Mobile sidebar toggle */}
+    <button
+      type="button"
+      className="sidebar-toggle"
+      onClick={() => setIsSidebarOpen((prev) => !prev)}
+    >
+      <i className="fa-solid fa-bars" />
+    </button>
 
-          <h1>
-            <i className={`fa-solid ${effectiveHeaderMeta.icon}`} /> {effectiveHeaderMeta.title}
-          </h1>
-          <p>{effectiveHeaderMeta.subtitle}</p>
-        </header>
+    {/* Titel & Untertitel */}
+    <div className="page-header-main">
+      <h1>
+        <i className={`fa-solid ${effectiveHeaderMeta.icon}`} /> {effectiveHeaderMeta.title}
+      </h1>
+      <p>{effectiveHeaderMeta.subtitle}</p>
+    </div>
 
-        <main className="app-main">
+    {/* Sichtbarer Session-Timer */}
+    {user && (
+      <div
+        className="session-timer"
+        style={{
+          marginLeft: 'auto',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '4px 10px',
+          borderRadius: '999px',
+          border: '1px solid #e5e7eb',
+          fontSize: '0.85rem',
+          fontWeight: 500,
+          backgroundColor: '#f9fafb',
+        }}
+      >
+        <i className="fa-solid fa-clock" />
+        <span>Session</span>
+        <span
+          style={{
+            fontVariantNumeric: 'tabular-nums',
+            fontWeight: 'bold',
+            color: secondsLeft <= 60 ? '#b91c1c' : '#111827',
+          }}
+        >
+          {formatSecondsToMMSS(secondsLeft)}
+        </span>
+      </div>
+    )}
+  </header>
 
-          {showExpenseForm && (
-            <section className="view">
-              <div className="card form-card">
-                <div className="card-header">
-                  <h3>
-                    <i className="fa-solid fa-wallet" /> New expense
-                  </h3>
+  <main className="app-main">
+
+    {showExpenseForm && (
+      <section className="view">
+        <div className="card form-card">
+          <div className="card-header">
+            <h3>
+              <i className="fa-solid fa-wallet" /> New expense
+            </h3>
+          </div>
+          <div className="card-body">
+            <form onSubmit={handleExpenseSubmit}>
+              <div className="form-row">
+                <div className="form-field">
+                  <label>Date</label>
+                  <div className="input-with-icon">
+                    <i className="fa-solid fa-calendar-day" />
+                    <input
+                      type="date"
+                      value={expenseForm.date}
+                      onChange={(e) =>
+                        setExpenseForm((prev) => ({ ...prev, date: e.target.value }))
+                      }
+                      required
+                    />
+                  </div>
                 </div>
-                <div className="card-body">
-                  <form onSubmit={handleExpenseSubmit}>
-                    <div className="form-row">
-                      <div className="form-field">
-                        <label>Date</label>
-                        <div className="input-with-icon">
-                          <i className="fa-solid fa-calendar-day" />
-                          <input
-                            type="date"
-                            value={expenseForm.date}
-                            onChange={(e) =>
-                              setExpenseForm((prev) => ({ ...prev, date: e.target.value }))
-                            }
-                            required
-                          />
-                        </div>
-                      </div>
-                      <div className="form-field">
-                        <label>Description</label>
-                        <div className="input-with-icon">
-                          <i className="fa-solid fa-file-lines" />
-                          <input
-                            type="text"
-                            value={expenseForm.description}
-                            onChange={(e) =>
-                              setExpenseForm((prev) => ({
-                                ...prev,
-                                description: e.target.value,
-                              }))
-                            }
-                            required
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="form-row">
-                      <div className="form-field">
-                        <label>Note</label>
-                        <div className="input-with-icon">
-                          <i className="fa-solid fa-note-sticky" />
-                          <input
-                            type="text"
-                            value={expenseForm.note}
-                            onChange={(e) =>
-                              setExpenseForm((prev) => ({ ...prev, note: e.target.value }))
-                            }
-                          />
-                        </div>
-                      </div>
-                      <div className="form-field">
-                        <label>Cash</label>
-                        <div className="input-with-icon">
-                          <i className="fa-solid fa-sack-dollar" />
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={expenseForm.cash}
-                            onChange={(e) =>
-                              setExpenseForm((prev) => ({ ...prev, cash: e.target.value }))
-                            }
-                            required
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="form-actions">
-                      <button type="submit" className="btn-primary">
-                        <i className="fa-solid fa-floppy-disk" />
-                        <span>Save</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-ghost"
-                        onClick={() => setShowExpenseForm(false)}
-                      >
-                        <i className="fa-solid fa-xmark" />
-                        <span>Close</span>
-                      </button>
-                    </div>
-                  </form>
+                <div className="form-field">
+                  <label>Description</label>
+                  <div className="input-with-icon">
+                    <i className="fa-solid fa-file-lines" />
+                    <input
+                      type="text"
+                      value={expenseForm.description}
+                      onChange={(e) =>
+                        setExpenseForm((prev) => ({...prev,description: e.target.value, }))
+                      }
+                      required
+                    />
+                  </div>
                 </div>
               </div>
-            </section>
-          )}
 
-          {/* DASHBOARD VIEW */}
-                    {activeView === 'dashboard' && (
-  <DashboardPage
-    cashLedgerTotalsAll={cashLedgerTotalsAll}
-    dashboardReceivableTotal={dashboardReceivableTotal}
-    dashboardCustomerPayablesTotal={dashboardCustomerPayablesTotal}
-    profitValue={profitValue}
-    supplierSummary={supplierSummary}
-  />
-)}
+              <div className="form-row">
+                <div className="form-field">
+                  <label>Note</label>
+                  <div className="input-with-icon">
+                    <i className="fa-solid fa-note-sticky" />
+                    <input
+                      type="text"
+                      value={expenseForm.note}
+                      onChange={(e) =>
+                        setExpenseForm((prev) => ({ ...prev, note: e.target.value }))
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="form-field">
+                  <label>Cash</label>
+                  <div className="input-with-icon">
+                    <i className="fa-solid fa-sack-dollar" />
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={expenseForm.cash}
+                      onChange={(e) =>
+                        setExpenseForm((prev) => ({ ...prev, cash: e.target.value }))
+                      }
+                      required
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-actions">
+                <button type="submit" className="btn-primary">
+                  <i className="fa-solid fa-floppy-disk" />
+                  <span>Save</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => setShowExpenseForm(false)}
+                >
+                  <i className="fa-solid fa-xmark" />
+                  <span>Close</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+    )}
+
+    {/* DASHBOARD VIEW */}
+    {activeView === 'dashboard' && (
+      <DashboardPage
+        cashLedgerTotalsAll={cashLedgerTotalsAll}
+        dashboardReceivableTotal={dashboardReceivableTotal}
+        dashboardCustomerPayablesTotal={dashboardCustomerPayablesTotal}
+        profitValue={profitValue}
+        supplierSummary={supplierSummary}
+      />
+    )}
+ 
+
 
           {/* EXPENSES VIEW */}
           {activeView === 'expenses' && (
@@ -3465,304 +3526,330 @@ return (
 
           {/* SUPPLIER DETAIL VIEW */}
           {activeView === 'supplierDetail' && (
-  <SupplierDetailPage
-    suppliers={suppliers}
-    supplierOrders={supplierOrders}
-    selectedSupplierId={selectedSupplierId}
-    supplierOrderForm={supplierOrderForm}
-    setSupplierOrderForm={setSupplierOrderForm}
-    supplierOrderSearch={supplierOrderSearch}
-    setSupplierOrderSearch={setSupplierOrderSearch}
-    supplierOrderFilterMode={supplierOrderFilterMode}
-    setSupplierOrderFilterMode={setSupplierOrderFilterMode}
-    filteredSupplierOrders={filteredSupplierOrders}
-    showSupplierOrderForm={showSupplierOrderForm}
-    editingSupplierOrder={editingSupplierOrder}
-    getSupplierTotals={getSupplierTotals}
-    goSuppliersOverview={goSuppliersOverview}
-    handleExportSupplierPDF={handleExportSupplierPDF}
-    openSupplierOrderForm={openSupplierOrderForm}
-    closeSupplierOrderForm={closeSupplierOrderForm}
-    handleSupplierOrderSubmit={handleSupplierOrderSubmit}
-    deleteSupplierOrder={deleteSupplierOrder}
-    openEditSupplierOrder={openEditSupplierOrder}
-    openHistory={openHistory}
-  />
-)}
-
-
-        {historyModal.open && historyModal.entityType && historyModal.entityId != null && (
-          <div className="modal-backdrop" onClick={closeHistoryModal}>
-            <div className="modal" onClick={(e) => e.stopPropagation()}>
-              <div className="modal-header">
-                <h3>
-                  <i className="fa-solid fa-clock-rotate-left" />{' '}
-                  {historyModal.title || 'Change history'}
-                </h3>
-                <button
-                  type="button"
-                  className="icon-btn close"
-                  onClick={closeHistoryModal}
-                >
-                  <i className="fa-solid fa-xmark" />
-                </button>
-              </div>
-              <div className="modal-body">
-                {currentHistoryLogs.length === 0 ? (
-                  <p>No changes recorded yet.</p>
-                ) : (
-                  <div className="history-list">
-                    {currentHistoryLogs.map((log) => (
-                      <div key={log.id} className="history-item">
-                        <div className="history-item-meta">
-                          <span>{formatDisplayDate(log.changedAt.slice(0, 10))}</span>
-                          <span>
-                            {new Date(log.changedAt).toLocaleTimeString([], {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </span>
-                        </div>
-                        <ul>
-                          {log.changes.map((ch, idx) => (
-                            <li key={idx}>
-                              <strong>{ch.field}</strong>: {String(ch.oldValue ?? '')} →{' '}
-                              {String(ch.newValue ?? '')}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-        
-          {activeView === 'profile' && (
-  <section className="view active">
-    <div className="card form-card">
-      <div className="card-header">
-        <h3>
-          <i className="fa-solid fa-user-gear" /> Profile &amp; settings
-        </h3>
-      </div>
-      <div className="card-body">
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault()
-
-            if (!isAdmin) {
-              alert('Only admin can update profile.')
-              return
-            }
-
-            if (!user?.id) {
-              alert('No logged in user.')
-              return
-            }
-
-            const payload = {
-              user_id: user.id,
-              program_name: profileForm.programName.trim() || 'Control console',
-              owner_email: profileForm.email.trim() || user.email,
-              business_name: profileForm.businessName.trim() || null,
-              phone: profileForm.phone.trim() || null,
-              address: profileForm.address.trim() || null,
-              timezone: profileForm.timezone || 'Europe/Berlin',
-              logo_url: profileForm.logoUrl.trim() || null,
-            }
-
-            try {
-              const { data, error } = await supabase
-                .from('profiles')
-                .upsert(payload, { onConflict: 'user_id' })
-                .select()
-                .single()
-
-              if (error) {
-                console.error('Error saving profile to Supabase', error)
-                alert('Failed to save profile. See console for details.')
-                return
-              }
-
-              setProgramName(data.program_name || 'Control console')
-              setUser((prev) =>
-                prev ? { ...prev, email: data.owner_email || prev.email } : prev,
-              )
-              alert('Profile updated.')
-            } catch (err) {
-              console.error('Unexpected error saving profile', err)
-              alert('Unexpected error while saving profile.')
-            }
-          }}
-        >
-          <div className="form-row">
-            <div className="form-field">
-              <label>Program name</label>
-              <div className="input-with-icon">
-                <i className="fa-solid fa-signature" />
-                <input
-                  type="text"
-                  value={profileForm.programName}
-                  readOnly={!isAdmin}
-                  onChange={(e) => {
-                    if (!isAdmin) return
-                    setProfileForm((prev) => ({
-                      ...prev,
-                      programName: e.target.value,
-                    }))
-                  }}
-                />
-              </div>
-            </div>
-
-            <div className="form-field">
-              <label>Owner email</label>
-              <div className="input-with-icon">
-                <i className="fa-solid fa-envelope" />
-                <input
-                  type="email"
-                  value={profileForm.email}
-                  readOnly={!isAdmin}
-                  onChange={(e) => {
-                    if (!isAdmin) return
-                    setProfileForm((prev) => ({
-                      ...prev,
-                      email: e.target.value,
-                    }))
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="form-row">
-            <div className="form-field">
-              <label>Business name</label>
-              <div className="input-with-icon">
-                <i className="fa-solid fa-building" />
-                <input
-                  type="text"
-                  value={profileForm.businessName}
-                  readOnly={!isAdmin}
-                  onChange={(e) => {
-                    if (!isAdmin) return
-                    setProfileForm((prev) => ({
-                      ...prev,
-                      businessName: e.target.value,
-                    }))
-                  }}
-                />
-              </div>
-            </div>
-
-            <div className="form-field">
-              <label>Phone</label>
-              <div className="input-with-icon">
-                <i className="fa-solid fa-phone" />
-                <input
-                  type="tel"
-                  value={profileForm.phone}
-                  readOnly={!isAdmin}
-                  onChange={(e) => {
-                    if (!isAdmin) return
-                    setProfileForm((prev) => ({
-                      ...prev,
-                      phone: e.target.value,
-                    }))
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="form-row">
-            <div className="form-field">
-              <label>Address</label>
-              <div className="input-with-icon">
-                <i className="fa-solid fa-location-dot" />
-                <input
-                  type="text"
-                  value={profileForm.address}
-                  readOnly={!isAdmin}
-                  onChange={(e) => {
-                    if (!isAdmin) return
-                    setProfileForm((prev) => ({
-                      ...prev,
-                      address: e.target.value,
-                    }))
-                  }}
-                />
-              </div>
-            </div>
-
-            <div className="form-field">
-              <label>Timezone</label>
-              <div className="input-with-icon">
-                <i className="fa-solid fa-globe" />
-                <input
-                  type="text"
-                  value={profileForm.timezone}
-                  readOnly={!isAdmin}
-                  onChange={(e) => {
-                    if (!isAdmin) return
-                    setProfileForm((prev) => ({
-                      ...prev,
-                      timezone: e.target.value,
-                    }))
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="form-row">
-            <div className="form-field">
-              <label>Logo URL (optional)</label>
-              <div className="input-with-icon">
-                <i className="fa-solid fa-image" />
-                <input
-                  type="text"
-                  value={profileForm.logoUrl}
-                  readOnly={!isAdmin}
-                  onChange={(e) => {
-                    if (!isAdmin) return
-                    setProfileForm((prev) => ({
-                      ...prev,
-                      logoUrl: e.target.value,
-                    }))
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {isAdmin && (
-            <div className="form-actions">
-              <button type="submit" className="btn-primary">
-                <i className="fa-solid fa-floppy-disk" />
-                <span>Save profile</span>
-              </button>
-            </div>
+            <SupplierDetailPage
+              suppliers={suppliers}
+              supplierOrders={supplierOrders}
+              selectedSupplierId={selectedSupplierId}
+              supplierOrderForm={supplierOrderForm}
+              setSupplierOrderForm={setSupplierOrderForm}
+              supplierOrderSearch={supplierOrderSearch}
+              setSupplierOrderSearch={setSupplierOrderSearch}
+              supplierOrderFilterMode={supplierOrderFilterMode}
+              setSupplierOrderFilterMode={setSupplierOrderFilterMode}
+              filteredSupplierOrders={filteredSupplierOrders}
+              showSupplierOrderForm={showSupplierOrderForm}
+              editingSupplierOrder={editingSupplierOrder}
+              getSupplierTotals={getSupplierTotals}
+              goSuppliersOverview={goSuppliersOverview}
+              handleExportSupplierPDF={handleExportSupplierPDF}
+              openSupplierOrderForm={openSupplierOrderForm}
+              closeSupplierOrderForm={closeSupplierOrderForm}
+              handleSupplierOrderSubmit={handleSupplierOrderSubmit}
+              deleteSupplierOrder={deleteSupplierOrder}
+              openEditSupplierOrder={openEditSupplierOrder}
+              openHistory={openHistory}
+            />
           )}
-        </form>
-      </div>
-    </div>
-  </section>
-)}
+
+          {/* HISTORY MODAL */}
+          {historyModal.open &&
+            historyModal.entityType &&
+            historyModal.entityId != null && (
+              <div className="modal-backdrop" onClick={closeHistoryModal}>
+                <div className="modal" onClick={(e) => e.stopPropagation()}>
+                  <div className="modal-header">
+                    <h3>
+                      <i className="fa-solid fa-clock-rotate-left" />{' '}
+                      {historyModal.title || 'Change history'}
+                    </h3>
+                    <button
+                      type="button"
+                      className="icon-btn close"
+                      onClick={closeHistoryModal}
+                    >
+                      <i className="fa-solid fa-xmark" />
+                    </button>
+                  </div>
+                  <div className="modal-body">
+                    {currentHistoryLogs.length === 0 ? (
+                      <p>No changes recorded yet.</p>
+                    ) : (
+                      <div className="history-list">
+                        {currentHistoryLogs.map((log) => (
+                          <div key={log.id} className="history-item">
+                            <div className="history-item-meta">
+                              <span>
+                                {formatDisplayDate(log.changedAt.slice(0, 10))}
+                              </span>
+                              <span>
+                                {new Date(log.changedAt).toLocaleTimeString([], {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                            </div>
+                            <ul>
+                              {log.changes.map((ch, idx) => (
+                                <li key={idx}>
+                                  <strong>{ch.field}</strong>:{' '}
+                                  {String(ch.oldValue ?? '')} →{' '}
+                                  {String(ch.newValue ?? '')}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+          {/* PROFILE VIEW */}
+          {activeView === 'profile' && (
+            <section className="view active">
+              <div className="card form-card">
+                <div className="card-header">
+                  <h3>
+                    <i className="fa-solid fa-user-gear" /> Profile &amp; settings
+                  </h3>
+                </div>
+                <div className="card-body">
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault()
+
+                      if (!isAdmin) {
+                        alert('Only admin can update profile.')
+                        return
+                      }
+
+                      if (!user?.id) {
+                        alert('No logged in user.')
+                        return
+                      }
+
+                      const payload = {
+                        user_id: user.id,
+                        program_name:
+                          profileForm.programName.trim() || 'Control console',
+                        owner_email: profileForm.email.trim() || user.email,
+                        business_name:
+                          profileForm.businessName.trim() || null,
+                        phone: profileForm.phone.trim() || null,
+                        address: profileForm.address.trim() || null,
+                        timezone: profileForm.timezone || 'Europe/Berlin',
+                        logo_url: profileForm.logoUrl.trim() || null,
+                      }
+
+                      try {
+                        const { data, error } = await supabase
+                          .from('profiles')
+                          .upsert(payload, { onConflict: 'user_id' })
+                          .select()
+                          .single()
+
+                        if (error) {
+                          console.error(
+                            'Error saving profile to Supabase',
+                            error,
+                          )
+                          alert(
+                            'Failed to save profile. See console for details.',
+                          )
+                          return
+                        }
+
+                        setProgramName(
+                          data.program_name || 'Control console',
+                        )
+                        setUser((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                email: data.owner_email || prev.email,
+                              }
+                            : prev,
+                        )
+                        alert('Profile updated.')
+                      } catch (err) {
+                        console.error(
+                          'Unexpected error saving profile',
+                          err,
+                        )
+                        alert('Unexpected error while saving profile.')
+                      }
+                    }}
+                  >
+                    <div className="form-row">
+                      <div className="form-field">
+                        <label>Program name</label>
+                        <div className="input-with-icon">
+                          <i className="fa-solid fa-signature" />
+                          <input
+                            type="text"
+                            value={profileForm.programName}
+                            readOnly={!isAdmin}
+                            onChange={(e) => {
+                              if (!isAdmin) return
+                              setProfileForm((prev) => ({
+                                ...prev,
+                                programName: e.target.value,
+                              }))
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="form-field">
+                        <label>Owner email</label>
+                        <div className="input-with-icon">
+                          <i className="fa-solid fa-envelope" />
+                          <input
+                            type="email"
+                            value={profileForm.email}
+                            readOnly={!isAdmin}
+                            onChange={(e) => {
+                              if (!isAdmin) return
+                              setProfileForm((prev) => ({
+                                ...prev,
+                                email: e.target.value,
+                              }))
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-field">
+                        <label>Business name</label>
+                        <div className="input-with-icon">
+                          <i className="fa-solid fa-building" />
+                          <input
+                            type="text"
+                            value={profileForm.businessName}
+                            readOnly={!isAdmin}
+                            onChange={(e) => {
+                              if (!isAdmin) return
+                              setProfileForm((prev) => ({
+                                ...prev,
+                                businessName: e.target.value,
+                              }))
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="form-field">
+                        <label>Phone</label>
+                        <div className="input-with-icon">
+                          <i className="fa-solid fa-phone" />
+                          <input
+                            type="tel"
+                            value={profileForm.phone}
+                            readOnly={!isAdmin}
+                            onChange={(e) => {
+                              if (!isAdmin) return
+                              setProfileForm((prev) => ({
+                                ...prev,
+                                phone: e.target.value,
+                              }))
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-field">
+                        <label>Address</label>
+                        <div className="input-with-icon">
+                          <i className="fa-solid fa-location-dot" />
+                          <input
+                            type="text"
+                            value={profileForm.address}
+                            readOnly={!isAdmin}
+                            onChange={(e) => {
+                              if (!isAdmin) return
+                              setProfileForm((prev) => ({
+                                ...prev,
+                                address: e.target.value,
+                              }))
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="form-field">
+                        <label>Timezone</label>
+                        <div className="input-with-icon">
+                          <i className="fa-solid fa-globe" />
+                          <input
+                            type="text"
+                            value={profileForm.timezone}
+                            readOnly={!isAdmin}
+                            onChange={(e) => {
+                              if (!isAdmin) return
+                              setProfileForm((prev) => ({
+                                ...prev,
+                                timezone: e.target.value,
+                              }))
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-field">
+                        <label>Logo URL (optional)</label>
+                        <div className="input-with-icon">
+                          <i className="fa-solid fa-image" />
+                          <input
+                            type="text"
+                            value={profileForm.logoUrl}
+                            readOnly={!isAdmin}
+                            onChange={(e) => {
+                              if (!isAdmin) return
+                              setProfileForm((prev) => ({
+                                ...prev,
+                                logoUrl: e.target.value,
+                              }))
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {isAdmin && (
+                      <div className="form-actions">
+                        <button type="submit" className="btn-primary">
+                          <i className="fa-solid fa-floppy-disk" />
+                          <span>Save profile</span>
+                        </button>
+                      </div>
+                    )}
+                  </form>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* DATALISTS */}
           <datalist id="customer-options">
             {customerNameSuggestions.map((name) => (
               <option key={name} value={name} />
             ))}
           </datalist>
+
           <datalist id="product-options">
             {COMMON_PRODUCTS.map((p) => (
               <option key={p} value={p} />
             ))}
           </datalist>
-</main>
+        </main>
       </div>
     </div>
   )
