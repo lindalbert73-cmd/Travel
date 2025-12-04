@@ -45,7 +45,7 @@ const COMMON_PRODUCTS = [
 function App() {
   const SESSION_TIMEOUT_SECONDS = 10 * 60
   const [secondsLeft, setSecondsLeft] = useState(SESSION_TIMEOUT_SECONDS)
-  const inactivityIntervalRef = useRef(null)
+  const lastActiveRef = useRef(Date.now());
 
   const [user, setUser] = useState(null)
   const [role, setRole] = useState('user')       // NEU
@@ -353,61 +353,53 @@ useEffect(() => {
   }
 }, [])
 
-// sichtbarer Auto-Logout-Timer: 10 Minuten Inaktivität
+
+
+  // Robuster Auto-Logout basierend auf Zeitstempeln (funktioniert auch auf Handy)
 useEffect(() => {
-  if (!user) {
-    // kein User eingeloggt → kein Timer
-    setSecondsLeft(0)
-    if (inactivityIntervalRef.current) {
-      clearInterval(inactivityIntervalRef.current)
-      inactivityIntervalRef.current = null
+  if (!user) return;
+
+  const TIMEOUT = 10 * 60 * 1000; // 10 Minuten
+  const activityEvents = [
+    'touchstart', 'touchmove', 'scroll',
+    'click', 'keydown', 'mousemove'
+  ];
+
+  const updateActivity = () => {
+    lastActiveRef.current = Date.now();
+  };
+
+  // Activity registrieren
+  activityEvents.forEach(evt =>
+    window.addEventListener(evt, updateActivity)
+  );
+
+  // Alle 3 Sekunden prüfen
+  const interval = setInterval(() => {
+    if (Date.now() - lastActiveRef.current > TIMEOUT) {
+      handleLogout();
     }
-    return
-  }
+  }, 3000);
 
-  // sobald der User eingeloggt ist, starten wir bei 10:00
-  setSecondsLeft(SESSION_TIMEOUT_SECONDS)
-
-  const ACTIVITY_EVENTS = ['mousemove', 'keydown', 'click', 'scroll']
-
-  const resetTimer = () => {
-    setSecondsLeft(SESSION_TIMEOUT_SECONDS)
-  }
-
-  // Activity-Events anhängen
-  ACTIVITY_EVENTS.forEach((eventName) => {
-    window.addEventListener(eventName, resetTimer)
-  })
-
-  // Falls es noch einen alten Interval gibt, aufräumen
-  if (inactivityIntervalRef.current) {
-    clearInterval(inactivityIntervalRef.current)
-  }
-
-  // Jede Sekunde runterzählen
-  inactivityIntervalRef.current = setInterval(() => {
-    setSecondsLeft((prev) => {
-      if (prev <= 1) {
-        clearInterval(inactivityIntervalRef.current)
-        inactivityIntervalRef.current = null
-        handleLogout()
-        return 0
+  // Wenn Tab/App reaktiviert wird
+  const visHandler = () => {
+    if (document.visibilityState === 'visible') {
+      if (Date.now() - lastActiveRef.current > TIMEOUT) {
+        handleLogout();
       }
-      return prev - 1
-    })
-  }, 1000)
-
-  // Cleanup
-  return () => {
-    ACTIVITY_EVENTS.forEach((eventName) => {
-      window.removeEventListener(eventName, resetTimer)
-    })
-    if (inactivityIntervalRef.current) {
-      clearInterval(inactivityIntervalRef.current)
-      inactivityIntervalRef.current = null
     }
-  }
-}, [user])
+  };
+  document.addEventListener('visibilitychange', visHandler);
+
+  return () => {
+    activityEvents.forEach(evt =>
+      window.removeEventListener(evt, updateActivity)
+    );
+    clearInterval(interval);
+    document.removeEventListener('visibilitychange', visHandler);
+  };
+}, [user]);
+
 
 
 
