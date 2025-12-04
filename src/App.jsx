@@ -71,6 +71,8 @@ function App() {
   const [nextInvoiceNumber, setNextInvoiceNumber] = useState(1)
   const [nextCustomerNumber, setNextCustomerNumber] = useState(1)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+
+
   // Counters (Invoice / Customer) aus Supabase laden
   useEffect(() => {
     if (!user?.id) return
@@ -400,6 +402,24 @@ useEffect(() => {
   };
 }, [user]);
 
+// Sichtbarer Countdown basierend auf lastActiveRef
+useEffect(() => {
+  if (!user) {
+    setSecondsLeft(0);
+    return;
+  }
+
+  const TIMEOUT = 10 * 60 * 1000; // 10 Minuten in ms
+
+  const id = setInterval(() => {
+    const diffMs = Date.now() - lastActiveRef.current;
+    const remainingMs = TIMEOUT - diffMs;
+    const remainingSec = Math.max(0, Math.floor(remainingMs / 1000));
+    setSecondsLeft(remainingSec);
+  }, 1000);
+
+  return () => clearInterval(id);
+}, [user]);
 
 
 
@@ -1779,81 +1799,120 @@ function openSupplierOrderForm() {
   }
 
 function handleExportSupplierPDF() {
-    const supplier = suppliers.find((s) => s.id === selectedSupplierId)
-    if (!supplier) return
-
-    const orders = supplierOrders.filter((o) => o.supplierId === selectedSupplierId)
-    const { totalCredit, totalDebit, balance } = getSupplierTotals(supplier, supplierOrders)
-
-    let runningBalance = 0
-
-    const rowsHtml = orders
-      .sort((a, b) => a.date.localeCompare(b.date) || (a.id || 0) - (b.id || 0))
-      .map((o) => {
-        const debit = Number(o.amountDebit) || 0
-        const credit = Number(o.amountCredit) || 0
-        runningBalance += credit - debit
-        return `
-          <tr>
-            <td>${formatDisplayDate(o.date)}</td>
-            <td>${o.customerName}</td>
-            <td>${o.product || ''}</td>
-            <td>${debit.toFixed(2)}</td>
-            <td>${credit.toFixed(2)}</td>
-            <td>${runningBalance.toFixed(2)}</td>
-          </tr>
-        `
-      })
-      .join('')
-
-    const html = `
-      <html>
-      <head>
-        <title>Supplier report - ${supplier.name}</title>
-        <style>
-          body { font-family: Arial, sans-serif; padding: 16px; }
-          h1 { font-size: 20px; margin-bottom: 4px; }
-          h2 { font-size: 16px; margin-top: 16px; }
-          table { border-collapse: collapse; width: 100%; margin-top: 8px; }
-          th, td { border: 1px solid #ccc; padding: 6px 8px; font-size: 12px; text-align: left; }
-          th { background: #f3f4f6; }
-          .summary { margin-top: 8px; font-size: 13px; }
-        </style>
-      </head>
-      <body>
-        <h1>Supplier: ${supplier.name}</h1>
-        <div class="summary">
-          <div><strong>Total credit:</strong> ${totalCredit.toFixed(2)}</div>
-          <div><strong>Total debit:</strong> ${totalDebit.toFixed(2)}</div>
-          <div><strong>Balance:</strong> ${balance.toFixed(2)}</div>
-        </div>
-        <h2>Orders</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Customer</th>
-              <th>Product</th>
-              <th>Debit</th>
-              <th>Credit</th>
-              <th>Balance</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rowsHtml || '<tr><td colspan="6">No orders yet.</td></tr>'}
-          </tbody>
-        </table>
-      </body>
-      </html>
-    `
-
-    const win = window.open('', '_blank')
-    if (!win) return
-    win.document.write(html)
-    win.document.close()
-    win.focus()
-    win.print()
+  const supplier = suppliers.find((s) => s.id === selectedSupplierId);
+  if (!supplier) {
+    alert('Please select a supplier first.');
+    return;
   }
+
+  const orders = supplierOrders
+    .filter((o) => o.supplierId === selectedSupplierId)
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.id || 0) - (b.id || 0));
+
+  const { totalCredit, totalDebit, balance } = getSupplierTotals(
+    supplier,
+    supplierOrders
+  );
+
+  const doc = new jsPDF('p', 'mm', 'a4');
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  const marginLeft = 10;
+  const marginTop = 10;
+  const lineHeight = 6;
+
+  const truncate = (str, maxLen) => {
+    if (!str) return '';
+    const s = String(str);
+    return s.length > maxLen ? s.slice(0, maxLen - 1) + '…' : s;
+  };
+
+  doc.setFontSize(16);
+  doc.text('Supplier report', marginLeft, marginTop);
+
+  doc.setFontSize(12);
+  let y = marginTop + lineHeight;
+  doc.text(`Supplier: ${supplier.name || ''}`, marginLeft, y);
+
+  y += lineHeight;
+  doc.text(`Total credit: ${totalCredit.toFixed(2)}`, marginLeft, y);
+  y += lineHeight;
+  doc.text(`Total debit:  ${totalDebit.toFixed(2)}`, marginLeft, y);
+  y += lineHeight;
+  doc.text(`Balance:      ${balance.toFixed(2)}`, marginLeft, y);
+
+  y += lineHeight * 2;
+  doc.setFontSize(13);
+  doc.text('Orders', marginLeft, y);
+
+  y += lineHeight;
+  doc.setFontSize(10);
+
+  const xDate = marginLeft;
+  const xCustomer = 35;
+  const xProduct = 85;
+  const xDebit = 130;
+  const xCredit = 155;
+  const xBalance = 180;
+
+  const drawTableHeader = () => {
+    doc.setFont(undefined, 'bold');
+    doc.text('Date', xDate, y);
+    doc.text('Customer', xCustomer, y);
+    doc.text('Product', xProduct, y);
+    doc.text('Debit', xDebit, y);
+    doc.text('Credit', xCredit, y);
+    doc.text('Balance', xBalance, y);
+    doc.setFont(undefined, 'normal');
+    y += lineHeight;
+  };
+
+  drawTableHeader();
+
+  let runningBalance = 0;
+
+  const ensureSpaceForRow = () => {
+    if (y > pageHeight - 15) {
+      doc.addPage();
+      y = marginTop;
+      doc.setFontSize(13);
+      doc.text('Orders (cont.)', marginLeft, y);
+      y += lineHeight;
+      doc.setFontSize(10);
+      drawTableHeader();
+    }
+  };
+
+  if (!orders.length) {
+    ensureSpaceForRow();
+    doc.text('No orders yet.', marginLeft, y);
+  } else {
+    for (const o of orders) {
+      const debit = Number(o.amountDebit) || 0;
+      const credit = Number(o.amountCredit) || 0;
+      runningBalance += credit - debit;
+
+      ensureSpaceForRow();
+
+      doc.text(formatDisplayDate(o.date), xDate, y);
+      doc.text(truncate(o.customerName, 20), xCustomer, y);
+      doc.text(truncate(o.product || '', 25), xProduct, y);
+      doc.text(debit.toFixed(2), xDebit, y, { align: 'right' });
+      doc.text(credit.toFixed(2), xCredit, y, { align: 'right' });
+      doc.text(runningBalance.toFixed(2), xBalance, y, { align: 'right' });
+
+      y += lineHeight;
+    }
+  }
+
+  const safeName = (supplier.name || 'supplier')
+    .toString()
+    .replace(/[^a-z0-9_\-]+/gi, '_');
+
+  doc.save(`supplier-report-${safeName}.pdf`);
+}
+
 
 
 
