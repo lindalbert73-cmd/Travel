@@ -52,7 +52,7 @@ function ExpensesPage({
                   </h3>
                   <div className="expense-header-right">
                     <span className="badge badge-total-expense">
-                      Gesamt Ausgabe: {expenseSummary.total}
+                      Total expense: {expenseSummary.total}
                     </span>
                   </div>
                 </div>
