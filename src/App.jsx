@@ -46,6 +46,27 @@ function App() {
   const SESSION_TIMEOUT_SECONDS = 10 * 60
   const [secondsLeft, setSecondsLeft] = useState(SESSION_TIMEOUT_SECONDS)
   const lastActiveRef = useRef(Date.now());
+  const lastPingRef = useRef(0)
+  const ACTIVITY_PING_THROTTLE_MS = 30 * 1000
+
+  const pingActivity = async (userId) => {
+    if (!userId) return
+
+    const now = Date.now()
+    // höchstens alle 30 Sekunden ein Update zur DB schicken
+    if (now - lastPingRef.current < ACTIVITY_PING_THROTTLE_MS) return
+
+    lastPingRef.current = now
+
+    try {
+      await supabase
+        .from('profiles')
+        .update({ last_activity_at: new Date().toISOString() })
+        .eq('user_id', userId)
+    } catch (e) {
+      console.error('pingActivity failed', e)
+    }
+  }
 
   const [user, setUser] = useState(null)
   const [role, setRole] = useState('user')       // NEU
@@ -332,21 +353,70 @@ function App() {
 useEffect(() => {
   let isMounted = true
 
-  async function loadSession() {
+    async function loadSession() {
     try {
       const { data } = await supabase.auth.getUser()
-      // Wenn keine Session existiert, ist das ok – wir lassen user einfach null
-      if (isMounted && data && data.user) {
-        setUser({ id: data.user.id, email: data.user.email || '' })
+      const supaUser = data?.user
+
+      // Keine Supabase-Session vorhanden
+      if (!supaUser) {
+        if (isMounted) {
+          setUser(null)
+        }
+        return
+      }
+
+      // Profil holen, um last_activity_at zu prüfen
+      let profile = null
+      try {
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('last_activity_at')
+          .eq('user_id', supaUser.id)
+          .maybeSingle()
+
+        if (profileError) {
+          console.error('Error loading profile in loadSession', profileError)
+        } else {
+          profile = profileData
+        }
+      } catch (e) {
+        console.error('Unexpected error loading profile in loadSession', e)
+      }
+
+      // Timeout: 10 Minuten
+      const TIMEOUT_MS = 10 * 60 * 1000
+
+      if (profile?.last_activity_at) {
+        const last = new Date(profile.last_activity_at).getTime()
+        const diff = Date.now() - last
+
+        if (diff > TIMEOUT_MS) {
+          // Session ist global abgelaufen -> hart ausloggen
+          await supabase.auth.signOut()
+          if (isMounted) {
+            setUser(null)
+          }
+          return
+        }
+      }
+
+      // Session ist ok -> User setzen
+      if (isMounted) {
+        setUser({ id: supaUser.id, email: supaUser.email || '' })
       }
     } catch (e) {
-      // Auth-Fehler beim Laden der Session ignorieren, um Konsole sauber zu halten
+      console.error('Error in loadSession', e)
+      if (isMounted) {
+        setUser(null)
+      }
     } finally {
       if (isMounted) {
         setAuthInitializing(false)
       }
     }
   }
+
 
   loadSession()
 
@@ -367,8 +437,10 @@ useEffect(() => {
     'click', 'keydown', 'mousemove'
   ];
 
-  const updateActivity = () => {
+    const updateActivity = () => {
     lastActiveRef.current = Date.now();
+    // zusätzlich Server informieren (globaler Timeout)
+    pingActivity(user.id);
   };
 
   // Activity registrieren
@@ -721,11 +793,13 @@ useEffect(() => {
 
 
   // navigation helpers (sidebar)
-  function handleAuthSuccess(info) {
-    // info is expected to be { id, email } from AuthScreen
+   async function handleAuthSuccess(info) {
     setUser({ id: info.id, email: info.email })
+    lastActiveRef.current = Date.now()
+    await pingActivity(info.id)   // initial last_activity_at setzen
     setActiveView('dashboard')
   }
+
 
   async function handleLogout() {
     try {
@@ -2600,13 +2674,22 @@ const cashLedgerComputed = useMemo(() => {
     })
 
     // required sort: unpaid > 0 first, then overpaid, then Nil
-    list.sort((a, b) => {
+     list.sort((a, b) => {
       const ua = Number(a.unpaid) || 0
       const ub = Number(b.unpaid) || 0
-      const groupA = ua > 0 ? 0 : ua < 0 ? 1 : 2
-      const groupB = ub > 0 ? 0 : ub < 0 ? 1 : 2
+
+      // Gruppe 0: unpaid != 0 (outstanding)
+      // Gruppe 1: unpaid == 0
+      const groupA = ua !== 0 ? 0 : 1
+      const groupB = ub !== 0 ? 0 : 1
+
+      // zuerst nach Gruppe sortieren
       if (groupA !== groupB) return groupA - groupB
+
+      // dann nach Datum: neueste oben
       if (a.date !== b.date) return b.date.localeCompare(a.date)
+
+      // dann innerhalb des gleichen Tages: neueste (größere id) oben
       return (b.id || 0) - (a.id || 0)
     })
 
