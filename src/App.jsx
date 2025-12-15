@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState, useRef } from 'react'
 import jsPDF from 'jspdf'
 import AuthScreen from './features/auth/AuthScreen'
 import SalesPage from './features/sales/SalesPage'
-import ReportsPage from './features/reports/ReportsPage'
 import DashboardPage from './features/dashboard/DashboardPage'
 import ReturnsPage from './features/returns/ReturnsPage'
 import ExpensesPage from './features/expenses/ExpensesPage'
@@ -87,6 +86,48 @@ function App() {
   
 
   const [activeView, setActiveView] = useState('dashboard')
+
+  // Dashboard filter
+  const [dashboardFilterMode, setDashboardFilterMode] = useState('all') // all | month | year
+  const [dashboardYear, setDashboardYear] = useState(String(new Date().getFullYear()))
+  const [dashboardMonth, setDashboardMonth] = useState(String(new Date().getMonth() + 1).padStart(2, '0'))
+
+  const endOfMonthISO = (year, month) => {
+    const y = Number(year)
+    const m = Number(month) // 1..12
+    if (!y || !m) return ''
+    const lastDay = new Date(y, m, 0).getDate()
+    return `${String(y)}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+  }
+
+  const startOfMonthISO = (year, month) => {
+    const y = Number(year)
+    const m = Number(month)
+    if (!y || !m) return ''
+    return `${String(y)}-${String(m).padStart(2, '0')}-01`
+  }
+
+  const inRange = (isoDate, from, to) => {
+    if (!isoDate) return false
+    if (from && isoDate < from) return false
+    if (to && isoDate > to) return false
+    return true
+  }
+
+  const dashboardRange = useMemo(() => {
+    if (dashboardFilterMode === 'month') {
+      const from = startOfMonthISO(dashboardYear, dashboardMonth)
+      const to = endOfMonthISO(dashboardYear, dashboardMonth)
+      return { from, to, label: `${dashboardYear}-${dashboardMonth}` }
+    }
+    if (dashboardFilterMode === 'year') {
+      const from = `${dashboardYear}-01-01`
+      const to = `${dashboardYear}-12-31`
+      return { from, to, label: dashboardYear }
+    }
+    return { from: '', to: '', label: 'All time' }
+  }, [dashboardFilterMode, dashboardYear, dashboardMonth])
+
   const [sales, setSales] = useState([])
   const [refunds, setRefunds] = useState([])
   const [nextInvoiceNumber, setNextInvoiceNumber] = useState(1)
@@ -294,6 +335,7 @@ function App() {
     date: getTodayISO(),
     customerName: '',
     product: '',
+    note: '',
     transactionType: 'invoice',
     amountCredit: '',
     amountDebit: '',
@@ -1677,6 +1719,7 @@ function openSupplierOrderForm() {
       date: getTodayISO(),
       customerName: '',
       product: '',
+      note: '',
       transactionType: 'invoice',
       amountCredit: '',
       amountDebit: '',
@@ -1690,6 +1733,7 @@ function openSupplierOrderForm() {
       date: order.date,
       customerName: order.customerName,
       product: order.product || '',
+      note: order.note || '',
       transactionType: order.transactionType || 'invoice',
       amountCredit: String(order.amountCredit ?? 0),
       amountDebit: String(order.amountDebit ?? 0),
@@ -1734,7 +1778,7 @@ function openSupplierOrderForm() {
   }
     if (!selectedSupplierId) return
 
-    const { date, customerName, product, amountCredit, amountDebit, transactionType } =
+    const { date, customerName, product, note, amountCredit, amountDebit, transactionType } =
       supplierOrderForm
 
     if (!date || !customerName.trim()) {
@@ -1747,6 +1791,7 @@ function openSupplierOrderForm() {
       date,
       customerName: customerName.trim(),
       product: product.trim(),
+      note: (note || '').trim(),
       transactionType: transactionType || 'invoice',
       amountCredit: Number(amountCredit) || 0,
       amountDebit: Number(amountDebit) || 0,
@@ -1761,6 +1806,7 @@ function openSupplierOrderForm() {
           date: data.date,
           customer_name: data.customerName,
           product: data.product,
+          note: data.note,
           transaction_type: data.transactionType,
           amount_credit: data.amountCredit,
           amount_debit: data.amountDebit,
@@ -1784,6 +1830,7 @@ function openSupplierOrderForm() {
           'date',
           'customerName',
           'product',
+          'note',
           'transactionType',
           'amountCredit',
           'amountDebit',
@@ -1825,6 +1872,7 @@ function openSupplierOrderForm() {
           date: data.date,
           customer_name: data.customerName,
           product: data.product,
+          note: data.note,
           transaction_type: data.transactionType,
           amount_credit: data.amountCredit,
           amount_debit: data.amountDebit,
@@ -1848,6 +1896,7 @@ function openSupplierOrderForm() {
           date: inserted.date || data.date,
           customerName: inserted.customer_name || data.customerName,
           product: inserted.product || data.product,
+          note: inserted.note || data.note,
           transactionType: inserted.transaction_type || data.transactionType,
           amountCredit: Number(inserted.amount_credit ?? data.amountCredit),
           amountDebit: Number(inserted.amount_debit ?? data.amountDebit),
@@ -1862,6 +1911,7 @@ function openSupplierOrderForm() {
         date: getTodayISO(),
         customerName: '',
         product: '',
+        note: '',
         transactionType: 'invoice',
         amountCredit: '',
         amountDebit: '',
@@ -1889,95 +1939,56 @@ function handleExportSupplierPDF() {
   );
 
   const doc = new jsPDF('p', 'mm', 'a4');
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
-
   const marginLeft = 10;
-  const marginTop = 10;
-  const lineHeight = 6;
-
-  const truncate = (str, maxLen) => {
-    if (!str) return '';
-    const s = String(str);
-    return s.length > maxLen ? s.slice(0, maxLen - 1) + '…' : s;
-  };
 
   doc.setFontSize(16);
-  doc.text('Supplier report', marginLeft, marginTop);
+  doc.text('Supplier report', marginLeft, 14);
+  doc.setFontSize(9);
+  doc.text(`Date: ${pdfTodayLabel()}`, marginLeft, 20);
 
   doc.setFontSize(12);
-  let y = marginTop + lineHeight;
-  doc.text(`Supplier: ${supplier.name || ''}`, marginLeft, y);
-
-  y += lineHeight;
-  doc.text(`Total credit: ${totalCredit.toFixed(2)}`, marginLeft, y);
-  y += lineHeight;
-  doc.text(`Total debit:  ${totalDebit.toFixed(2)}`, marginLeft, y);
-  y += lineHeight;
-  doc.text(`Balance:      ${balance.toFixed(2)}`, marginLeft, y);
-
-  y += lineHeight * 2;
-  doc.setFontSize(13);
-  doc.text('Orders', marginLeft, y);
-
-  y += lineHeight;
+  doc.text(`Supplier: ${supplier.name || ''}`, marginLeft, 28);
   doc.setFontSize(10);
+  doc.text(`Total credit: ${totalCredit.toFixed(2)}`, marginLeft, 34);
+  doc.text(`Total debit:  ${totalDebit.toFixed(2)}`, marginLeft, 40);
+  doc.text(`Balance:      ${balance.toFixed(2)}`, marginLeft, 46);
 
-  const xDate = marginLeft;
-  const xCustomer = 35;
-  const xProduct = 85;
-  const xDebit = 130;
-  const xCredit = 155;
-  const xBalance = 180;
-
-  const drawTableHeader = () => {
-    doc.setFont(undefined, 'bold');
-    doc.text('Date', xDate, y);
-    doc.text('Customer', xCustomer, y);
-    doc.text('Product', xProduct, y);
-    doc.text('Debit', xDebit, y);
-    doc.text('Credit', xCredit, y);
-    doc.text('Balance', xBalance, y);
-    doc.setFont(undefined, 'normal');
-    y += lineHeight;
-  };
-
-  drawTableHeader();
-
+  // Table rows (NOTE intentionally not included in PDF)
   let runningBalance = 0;
+  const rows = orders.map((o) => {
+    const debit = Number(o.amountDebit) || 0;
+    const credit = Number(o.amountCredit) || 0;
+    runningBalance += credit - debit;
+    return [
+      formatDisplayDate(o.date),
+      o.customerName || '',
+      o.product || '',
+      debit.toFixed(2),
+      credit.toFixed(2),
+      runningBalance.toFixed(2),
+    ]
+  })
 
-  const ensureSpaceForRow = () => {
-    if (y > pageHeight - 15) {
-      doc.addPage();
-      y = marginTop;
-      doc.setFontSize(13);
-      doc.text('Orders (cont.)', marginLeft, y);
-      y += lineHeight;
-      doc.setFontSize(10);
-      drawTableHeader();
-    }
-  };
-
-  if (!orders.length) {
-    ensureSpaceForRow();
-    doc.text('No orders yet.', marginLeft, y);
+  if (!rows.length) {
+    doc.setFontSize(10)
+    doc.text('No orders yet.', marginLeft, 58)
   } else {
-    for (const o of orders) {
-      const debit = Number(o.amountDebit) || 0;
-      const credit = Number(o.amountCredit) || 0;
-      runningBalance += credit - debit;
-
-      ensureSpaceForRow();
-
-      doc.text(formatDisplayDate(o.date), xDate, y);
-      doc.text(truncate(o.customerName, 20), xCustomer, y);
-      doc.text(truncate(o.product || '', 25), xProduct, y);
-      doc.text(debit.toFixed(2), xDebit, y, { align: 'right' });
-      doc.text(credit.toFixed(2), xCredit, y, { align: 'right' });
-      doc.text(runningBalance.toFixed(2), xBalance, y, { align: 'right' });
-
-      y += lineHeight;
-    }
+    drawGridTable(doc, {
+      startX: marginLeft,
+      startY: 54,
+      pageTopY: 18,
+      fontSize: 7.5,
+      headerFontSize: 7.5,
+      columns: [
+        { header: 'Date', width: 20 },
+        { header: 'Customer', width: 55 },
+        { header: 'Product', width: 50 },
+        { header: 'Debit', width: 20, align: 'right' },
+        { header: 'Credit', width: 20, align: 'right' },
+        { header: 'Balance', width: 25, align: 'right' },
+      ],
+      rows,
+    })
   }
 
   const safeName = (supplier.name || 'supplier')
@@ -2449,6 +2460,38 @@ function handleExportSupplierPDF() {
     return formatMoney(profit)
   }, [sales, refunds, supplierOrders, expenses])
 
+  const profitValueFiltered = useMemo(() => {
+    if (!dashboardRange.from && !dashboardRange.to) return formatMoney(0)
+
+    const salesList = sales.filter((s) => inRange(s.date, dashboardRange.from, dashboardRange.to))
+    const refundsList = refunds.filter((r) => inRange(r.date, dashboardRange.from, dashboardRange.to))
+    const expensesList = expenses.filter((e) => inRange(e.date, dashboardRange.from, dashboardRange.to))
+    const supplierOrdersList = supplierOrders.filter((o) => inRange(o.date, dashboardRange.from, dashboardRange.to))
+
+    let totalSalesAmount = 0
+    for (const s of salesList) totalSalesAmount += Number(s.total) || 0
+
+    let totalRefundsAll = 0
+    for (const r of refundsList) {
+      const cash = Number(r.cash) || 0
+      const unpaid = Number(r.unpaid) || 0
+      totalRefundsAll += cash + unpaid
+    }
+
+    let supplierBalance = 0
+    for (const o of supplierOrdersList) {
+      const txType = o.transactionType || 'invoice'
+      if (txType === 'invoice') supplierBalance += Number(o.amountCredit) || 0
+      else if (txType === 'return') supplierBalance -= Number(o.amountDebit) || 0
+    }
+
+    let totalExpenses = 0
+    for (const e of expensesList) totalExpenses += Number(e.cash) || 0
+
+    const profit = totalSalesAmount - totalRefundsAll - supplierBalance - totalExpenses
+    return formatMoney(profit)
+  }, [sales, refunds, supplierOrders, expenses, dashboardRange.from, dashboardRange.to])
+
 
   const netSalesValue = useMemo(() => {
     const totalSales = Number(salesSummary.totalAmount) || 0
@@ -2572,6 +2615,39 @@ function handleExportSupplierPDF() {
       closingBalance: formatMoney(running),
     }
   }, [cashLedgerBaseRows, cashOpeningBalance])
+
+  // Dashboard cash totals with dashboard month/year filter (balance up to period end)
+  const cashLedgerTotalsDashboard = useMemo(() => {
+    let rows = [...cashLedgerBaseRows]
+
+    if (dashboardRange.to) {
+      rows = rows.filter((r) => r.date && r.date <= dashboardRange.to)
+    }
+
+    rows.sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date)
+      return String(a.id).localeCompare(String(b.id))
+    })
+
+    let running = Number(cashOpeningBalance) || 0
+    let totalIn = 0
+    let totalOut = 0
+
+    for (const row of rows) {
+      const amtIn = Number(row.amountIn) || 0
+      const amtOut = Number(row.amountOut) || 0
+      totalIn += amtIn
+      totalOut += amtOut
+      running += amtIn - amtOut
+    }
+
+    return {
+      openingBalance: formatMoney(cashOpeningBalance || 0),
+      totalIn: formatMoney(totalIn),
+      totalOut: formatMoney(totalOut),
+      closingBalance: formatMoney(running),
+    }
+  }, [cashLedgerBaseRows, cashOpeningBalance, dashboardRange.to])
 
 const cashLedgerComputed = useMemo(() => {
     let rows = [...cashLedgerBaseRows]
@@ -2834,13 +2910,131 @@ const cashLedgerComputed = useMemo(() => {
     }
     return formatMoney(total)
   }, [allPayableRefunds])
-  const exportReceivablesPdf = () => {
-    const doc = new jsPDF()
-    doc.setFontSize(14)
-    doc.text('Customers receivable', 14, 20)
-    doc.setFontSize(10)
 
-    const headers = ['Date', 'Invoice', 'Customer', 'Product', 'Outstanding']
+  // Dashboard filtered totals (month/year) based on dashboardRange
+  const dashboardReceivableTotalFiltered = useMemo(() => {
+    if (!dashboardRange.from && !dashboardRange.to) return formatMoney(0)
+    let total = 0
+    for (const s of sales) {
+      if (!inRange(s.date, dashboardRange.from, dashboardRange.to)) continue
+      const unpaid = Number(s.unpaid) || 0
+      if (unpaid > 0) total += unpaid
+    }
+    return formatMoney(total)
+  }, [sales, dashboardRange.from, dashboardRange.to])
+
+  const dashboardCustomerPayablesTotalFiltered = useMemo(() => {
+    if (!dashboardRange.from && !dashboardRange.to) return formatMoney(0)
+    let total = 0
+    for (const r of refunds) {
+      if (!inRange(r.date, dashboardRange.from, dashboardRange.to)) continue
+      const unpaid = Number(r.unpaid) || 0
+      if (unpaid > 0) total += unpaid
+    }
+    return formatMoney(total)
+  }, [refunds, dashboardRange.from, dashboardRange.to])
+
+  // ---- PDF helpers (simple grid table, smaller font + wrapped text) ----
+  const pdfTodayLabel = () => {
+    try {
+      return new Date().toLocaleDateString('de-DE')
+    } catch {
+      return getTodayISO()
+    }
+  }
+
+  const drawGridTable = (doc, opts) => {
+    const {
+      startX,
+      startY,
+      columns,
+      rows,
+      rowPaddingY = 2,
+      fontSize = 8,
+      headerFontSize = 8,
+      pageTopY = 20,
+      bottomMargin = 12,
+    } = opts
+
+    const pageHeight = doc.internal.pageSize.getHeight()
+
+    let y = startY
+    doc.setFontSize(headerFontSize)
+    doc.setFont(undefined, 'bold')
+
+    const drawHeader = () => {
+      let x = startX
+      const headerHeight = 8
+      for (const col of columns) {
+        doc.rect(x, y, col.width, headerHeight)
+        const lines = doc.splitTextToSize(String(col.header || ''), col.width - 2)
+        doc.text(lines, x + 1, y + 5)
+        x += col.width
+      }
+      y += headerHeight
+      doc.setFont(undefined, 'normal')
+      doc.setFontSize(fontSize)
+    }
+
+    const ensureSpace = (neededHeight) => {
+      if (y + neededHeight > pageHeight - bottomMargin) {
+        doc.addPage()
+        y = pageTopY
+        doc.setFontSize(headerFontSize)
+        doc.setFont(undefined, 'bold')
+        drawHeader()
+      }
+    }
+
+    drawHeader()
+
+    for (const row of rows) {
+      // calculate row height based on wrapped text
+      const cellLines = columns.map((col, idx) => {
+        const raw = row[idx] == null ? '' : String(row[idx])
+        return doc.splitTextToSize(raw, col.width - 2)
+      })
+      const maxLines = Math.max(1, ...cellLines.map((l) => l.length || 1))
+      const rowHeight = Math.max(7, maxLines * 4 + rowPaddingY)
+
+      ensureSpace(rowHeight)
+
+      let x = startX
+      for (let i = 0; i < columns.length; i++) {
+        const col = columns[i]
+        const lines = cellLines[i]
+        doc.rect(x, y, col.width, rowHeight)
+        const align = col.align || 'left'
+
+        // multi-line draw
+        if (align === 'right') {
+          // draw each line aligned right
+          lines.forEach((ln, li) => {
+            doc.text(ln, x + col.width - 1, y + 5 + li * 4, { align: 'right' })
+          })
+        } else if (align === 'center') {
+          lines.forEach((ln, li) => {
+            doc.text(ln, x + col.width / 2, y + 5 + li * 4, { align: 'center' })
+          })
+        } else {
+          doc.text(lines, x + 1, y + 5)
+        }
+
+        x += col.width
+      }
+      y += rowHeight
+    }
+
+    return y
+  }
+
+  const exportReceivablesPdf = () => {
+    const doc = new jsPDF('p', 'mm', 'a4')
+    doc.setFontSize(14)
+    doc.text('Customers receivable', 14, 16)
+    doc.setFontSize(9)
+    doc.text(`Date: ${pdfTodayLabel()}`, 14, 22)
+
     const rows = receivableInvoices.map((s) => [
       formatDisplayDate(s.date),
       s.invoiceNo || '',
@@ -2849,36 +3043,32 @@ const cashLedgerComputed = useMemo(() => {
       formatMoney(Number(s.unpaid) || 0),
     ])
 
-    let y = 30
-    const lineHeight = 7
-
-    const drawRow = (cols) => {
-      const xPositions = [14, 40, 80, 120, 170]
-      cols.forEach((col, idx) => {
-        const text = String(col)
-        doc.text(text, xPositions[idx], y)
-      })
-      y += lineHeight
-      if (y > 280) {
-        doc.addPage()
-        y = 20
-      }
-    }
-
-    drawRow(headers)
-    y += 2
-    rows.forEach(drawRow)
+    drawGridTable(doc, {
+      startX: 14,
+      startY: 28,
+      pageTopY: 18,
+      fontSize: 8,
+      headerFontSize: 8,
+      columns: [
+        { header: 'Date', width: 22 },
+        { header: 'Invoice', width: 22 },
+        { header: 'Customer', width: 60 }, // wider for long names
+        { header: 'Product', width: 55 },
+        { header: 'Outstanding', width: 27, align: 'right' },
+      ],
+      rows,
+    })
 
     doc.save('customers_receivable.pdf')
   }
 
   const exportCustomerPayablesPdf = () => {
-    const doc = new jsPDF()
+    const doc = new jsPDF('p', 'mm', 'a4')
     doc.setFontSize(14)
-    doc.text('Customers payable', 14, 20)
-    doc.setFontSize(10)
+    doc.text('Customers payable', 14, 16)
+    doc.setFontSize(9)
+    doc.text(`Date: ${pdfTodayLabel()}`, 14, 22)
 
-    const headers = ['Date', 'Invoice', 'Customer', 'Product', 'Still payable']
     const rows = payableRefunds.map((r) => [
       formatDisplayDate(r.date),
       r.invoiceNo || '',
@@ -2887,25 +3077,21 @@ const cashLedgerComputed = useMemo(() => {
       formatMoney(Number(r.unpaid) || 0),
     ])
 
-    let y = 30
-    const lineHeight = 7
-
-    const drawRow = (cols) => {
-      const xPositions = [14, 40, 80, 120, 170]
-      cols.forEach((col, idx) => {
-        const text = String(col)
-        doc.text(text, xPositions[idx], y)
-      })
-      y += lineHeight
-      if (y > 280) {
-        doc.addPage()
-        y = 20
-      }
-    }
-
-    drawRow(headers)
-    y += 2
-    rows.forEach(drawRow)
+    drawGridTable(doc, {
+      startX: 14,
+      startY: 28,
+      pageTopY: 18,
+      fontSize: 8,
+      headerFontSize: 8,
+      columns: [
+        { header: 'Date', width: 22 },
+        { header: 'Invoice', width: 22 },
+        { header: 'Customer', width: 60 },
+        { header: 'Product', width: 55 },
+        { header: 'Still payable', width: 27, align: 'right' },
+      ],
+      rows,
+    })
 
     doc.save('customers_payable.pdf')
   }
@@ -2951,6 +3137,29 @@ const cashLedgerComputed = useMemo(() => {
       balance: formatMoney(totalCredit - totalDebit),
     }
   }, [suppliers, supplierOrders])
+
+  const supplierSummaryDashboard = useMemo(() => {
+    const ordersUpTo = dashboardRange.to
+      ? supplierOrders.filter((o) => o.date && o.date <= dashboardRange.to)
+      : supplierOrders
+
+    const totalSuppliers = suppliers.length
+    let totalCredit = 0
+    let totalDebit = 0
+
+    for (const sup of suppliers) {
+      const { totalCredit: c, totalDebit: d } = getSupplierTotals(sup, ordersUpTo)
+      totalCredit += c
+      totalDebit += d
+    }
+
+    return {
+      totalSuppliers,
+      totalCredit: formatMoney(totalCredit),
+      totalDebit: formatMoney(totalDebit),
+      balance: formatMoney(totalCredit - totalDebit),
+    }
+  }, [suppliers, supplierOrders, dashboardRange.to])
 
   const filteredSuppliers = useMemo(() => {
     const search = supplierSearch.toLowerCase()
@@ -3116,12 +3325,6 @@ const headerMeta =
     title: 'Cash ledger',
     subtitle: 'Cash movements from sales, refunds, expenses and suppliers.',
   }
-: activeView === 'reports'
-? {
-    icon: 'fa-file-lines',
-    title: 'Reports',
-    subtitle: 'Generate PDF reports for customers and suppliers.',
-  }
 : activeView === 'suppliers'
 ? {
     icon: 'fa-truck',
@@ -3258,19 +3461,6 @@ return (
   </button>
 </nav>
 
-<div className="sidebar-section-label">Reports</div>
-<nav className="sidebar-nav">
-  <button
-    className={`sidebar-item ${activeView === 'reports' ? 'active' : ''}`}
-    onClick={() => {
-    setActiveView('reports')
-    setIsSidebarOpen(false)
-  }}
-  >
-    <i className="fa-solid fa-file-pdf" />
-    <span>Reports / PDF</span>
-  </button>
-</nav>
 
 <div className="sidebar-section-label">Suppliers</div>
 <nav className="sidebar-nav">
@@ -3470,11 +3660,19 @@ return (
     {/* DASHBOARD VIEW */}
     {activeView === 'dashboard' && (
       <DashboardPage
-        cashLedgerTotalsAll={cashLedgerTotalsAll}
-        dashboardReceivableTotal={dashboardReceivableTotal}
-        dashboardCustomerPayablesTotal={dashboardCustomerPayablesTotal}
-        profitValue={profitValue}
-        supplierSummary={supplierSummary}
+        cashLedgerTotalsAll={dashboardFilterMode === 'all' ? cashLedgerTotalsAll : cashLedgerTotalsDashboard}
+        dashboardReceivableTotal={dashboardFilterMode === 'all' ? dashboardReceivableTotal : dashboardReceivableTotalFiltered}
+        dashboardCustomerPayablesTotal={dashboardFilterMode === 'all' ? dashboardCustomerPayablesTotal : dashboardCustomerPayablesTotalFiltered}
+        profitValue={dashboardFilterMode === 'all' ? profitValue : profitValueFiltered}
+        supplierSummary={dashboardFilterMode === 'all' ? supplierSummary : supplierSummaryDashboard}
+
+        dashboardFilterMode={dashboardFilterMode}
+        setDashboardFilterMode={setDashboardFilterMode}
+        dashboardYear={dashboardYear}
+        setDashboardYear={setDashboardYear}
+        dashboardMonth={dashboardMonth}
+        setDashboardMonth={setDashboardMonth}
+        dashboardRangeLabel={dashboardRange.label}
       />
     )}
  
@@ -3519,16 +3717,6 @@ return (
     setCashOpeningBalance={setCashOpeningBalance}
   />
 )}
-
-        {/* REPORTS VIEW */}
-        {activeView === 'reports' && (
-          <ReportsPage
-            exportReceivablesPdf={exportReceivablesPdf}
-            exportCustomerPayablesPdf={exportCustomerPayablesPdf}
-            handleExportSupplierPDF={handleExportSupplierPDF}
-          />
-        )}
-
 {/* SALES VIEW */}
           {activeView === 'sales' && (
   <SalesPage

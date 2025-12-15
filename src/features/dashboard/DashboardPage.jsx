@@ -6,10 +6,63 @@ function DashboardPage({
   dashboardCustomerPayablesTotal,
   profitValue,
   supplierSummary,
+
+  dashboardFilterMode,
+  setDashboardFilterMode,
+  dashboardYear,
+  setDashboardYear,
+  dashboardMonth,
+  setDashboardMonth,
+  dashboardRangeLabel,
 }) {
   return (
 
             <section className="view active" id="view-dashboard">
+
+              {/* Dashboard filter */}
+              <div className="card" style={{ marginBottom: 12 }}>
+                <div
+                  className="card-body"
+                  style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}
+                >
+                  <strong>Dashboard filter:</strong>
+
+                  <select value={dashboardFilterMode} onChange={(e) => setDashboardFilterMode(e.target.value)}>
+                    <option value="all">All</option>
+                    <option value="month">Month</option>
+                    <option value="year">Year</option>
+                  </select>
+
+                  {dashboardFilterMode !== 'all' && (
+                    <>
+                      <input
+                        type="number"
+                        min="2000"
+                        max="2100"
+                        value={dashboardYear}
+                        onChange={(e) => setDashboardYear(e.target.value)}
+                        style={{ width: 100 }}
+                      />
+
+                      {dashboardFilterMode === 'month' && (
+                        <select value={dashboardMonth} onChange={(e) => setDashboardMonth(e.target.value)}>
+                          {Array.from({ length: 12 }).map((_, i) => {
+                            const mm = String(i + 1).padStart(2, '0')
+                            return (
+                              <option key={mm} value={mm}>
+                                {mm}
+                              </option>
+                            )
+                          })}
+                        </select>
+                      )}
+
+                      <span style={{ opacity: 0.7 }}>Showing: {dashboardRangeLabel}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
               {/* Row 1: Cash + customers */}
               <div className="summary-grid">
                 {/* Total cash = CLOSING BALANCE (global) */}

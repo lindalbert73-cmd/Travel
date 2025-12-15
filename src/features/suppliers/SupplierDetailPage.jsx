@@ -162,6 +162,23 @@ function SupplierDetailPage({
                                   />
                                 </div>
                               </div>
+
+                              <div className="form-field">
+                                <label>Note</label>
+                                <div className="input-with-icon">
+                                  <i className="fa-solid fa-note-sticky" />
+                                  <input
+                                    type="text"
+                                    value={supplierOrderForm.note || ''}
+                                    onChange={(e) =>
+                                      setSupplierOrderForm((prev) => ({
+                                        ...prev,
+                                        note: e.target.value,
+                                      }))
+                                    }
+                                  />
+                                </div>
+                              </div>
                             </div>
 
                             <div className="form-row">
