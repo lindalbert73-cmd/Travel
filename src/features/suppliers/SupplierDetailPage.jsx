@@ -181,73 +181,87 @@ function SupplierDetailPage({
                               </div>
                             </div>
 
+                            
+                            
                             <div className="form-row">
                               <div className="form-field">
-                                <label>Type</label>
+                                <label>Credit side</label>
                                 <div className="input-with-icon">
-                                  <i className="fa-solid fa-receipt" />
+                                  <i className="fa-solid fa-list" />
                                   <select
-                                    value={supplierOrderForm.transactionType}
+                                    value={supplierOrderForm.creditSideType || ''}
                                     onChange={(e) =>
                                       setSupplierOrderForm((prev) => ({
                                         ...prev,
-                                        transactionType: e.target.value,
+                                        creditSideType: e.target.value,
                                       }))
                                     }
                                   >
-                                    <option value="invoice">Credit</option>
-                                    <option value="return">Debit</option>
-                                    <option value="payment">Payment to supplier (cash out)</option>
-                                    <option value="refund">Receive from supplier (cash in)</option>
+                                    <option value="">-- Select --</option>
+                                    <option value="credit">Credit (invoice)</option>
+                                    <option value="cashIn">Cash in (receive from supplier)</option>
                                   </select>
                                 </div>
                               </div>
                               <div className="form-field">
-                                <label>
-                                  {['invoice', 'refund'].includes(supplierOrderForm.transactionType)
-                                    ? 'Amount credit'
-                                    : 'Amount debit'}
-                                </label>
+                                <label>Amount credit / cash in</label>
                                 <div className="input-with-icon">
                                   <i className="fa-solid fa-arrow-up" />
                                   <input
                                     type="number"
                                     step="0.01"
-                                    value={
-                                      ['invoice', 'refund'].includes(
-                                        supplierOrderForm.transactionType,
-                                      )
-                                        ? supplierOrderForm.amountCredit
-                                        : supplierOrderForm.amountDebit
-                                    }
+                                    value={supplierOrderForm.amountCredit || ''}
                                     onChange={(e) =>
-                                      setSupplierOrderForm((prev) => {
-                                        const value = e.target.value
-                                        if (
-                                          ['invoice', 'refund'].includes(
-                                            prev.transactionType || 'invoice',
-                                          )
-                                        ) {
-                                          return {
-                                            ...prev,
-                                            amountCredit: value,
-                                            // keep debit as-is
-                                          }
-                                        } else {
-                                          return {
-                                            ...prev,
-                                            amountDebit: value,
-                                            // keep credit as-is
-                                          }
-                                        }
-                                      })
+                                      setSupplierOrderForm((prev) => ({
+                                        ...prev,
+                                        amountCredit: e.target.value,
+                                      }))
                                     }
                                   />
                                 </div>
                               </div>
                             </div>
 
-                            <div className="form-actions">
+                            <div className="form-row">
+                              <div className="form-field">
+                                <label>Debit side</label>
+                                <div className="input-with-icon">
+                                  <i className="fa-solid fa-list" />
+                                  <select
+                                    value={supplierOrderForm.debitSideType || ''}
+                                    onChange={(e) =>
+                                      setSupplierOrderForm((prev) => ({
+                                        ...prev,
+                                        debitSideType: e.target.value,
+                                      }))
+                                    }
+                                  >
+                                    <option value="">-- Select --</option>
+                                    <option value="debit">Debit (return)</option>
+                                    <option value="cashOut">Cash out (payment to supplier)</option>
+                                  </select>
+                                </div>
+                              </div>
+                              <div className="form-field">
+                                <label>Amount debit / cash out</label>
+                                <div className="input-with-icon">
+                                  <i className="fa-solid fa-arrow-down" />
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={supplierOrderForm.amountDebit || ''}
+                                    onChange={(e) =>
+                                      setSupplierOrderForm((prev) => ({
+                                        ...prev,
+                                        amountDebit: e.target.value,
+                                      }))
+                                    }
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+<div className="form-actions">
                               <button type="submit" className="btn-primary">
                                 <i className="fa-solid fa-floppy-disk" />
                                 <span>Save</span>

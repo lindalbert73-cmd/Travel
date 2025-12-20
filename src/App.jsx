@@ -336,7 +336,8 @@ function App() {
     customerName: '',
     product: '',
     note: '',
-    transactionType: 'invoice',
+    creditSideType: '',
+    debitSideType: '',
     amountCredit: '',
     amountDebit: '',
   })
@@ -783,6 +784,8 @@ useEffect(() => {
         transactionType: row.transaction_type || 'invoice',
         amountCredit: Number(row.amount_credit ?? 0),
         amountDebit: Number(row.amount_debit ?? 0),
+        cashIn: Number(row.cash_in ?? 0),
+        cashOut: Number(row.cash_out ?? 0),
       }))
 
       setSuppliers(mappedSuppliers)
@@ -1712,6 +1715,71 @@ function openEditSupplierForm(supplier) {
     }
   }
 
+
+function decodeSupplierOrderFlags(txType) {
+  const flags = {
+    credit: false,
+    cashIn: false,
+    debit: false,
+    cashOut: false,
+  }
+
+  if (!txType) return flags
+
+  if (typeof txType === 'string' && txType.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(txType)
+      return {
+        credit: !!parsed.credit,
+        cashIn: !!parsed.cashIn,
+        debit: !!parsed.debit,
+        cashOut: !!parsed.cashOut,
+      }
+    } catch (e) {
+      console.error('Could not parse supplier order transactionType JSON', e, txType)
+      return flags
+    }
+  }
+
+  switch (txType) {
+    case 'invoice':
+      flags.credit = true
+      break
+    case 'refund':
+      flags.cashIn = true
+      break
+    case 'return':
+      flags.debit = true
+      break
+    case 'payment':
+      flags.cashOut = true
+      break
+    default:
+      break
+  }
+
+  return flags
+}
+
+function encodeSupplierOrderFlagsFromForm(form) {
+  const creditSide = form.creditSideType || ''
+  const debitSide = form.debitSideType || ''
+
+  const flags = {
+    credit: creditSide === 'credit',
+    cashIn: creditSide === 'cashIn',
+    debit: debitSide === 'debit',
+    cashOut: debitSide === 'cashOut',
+  }
+
+  if (flags.credit && !flags.cashIn && !flags.debit && !flags.cashOut) return 'invoice'
+  if (!flags.credit && flags.cashIn && !flags.debit && !flags.cashOut) return 'refund'
+  if (!flags.credit && !flags.cashIn && flags.debit && !flags.cashOut) return 'return'
+  if (!flags.credit && !flags.cashIn && !flags.debit && flags.cashOut) return 'payment'
+
+  return JSON.stringify(flags)
+}
+
 function openSupplierOrderForm() {
     if (!selectedSupplierId) return
     setEditingSupplierOrder(null)
@@ -1720,7 +1788,8 @@ function openSupplierOrderForm() {
       customerName: '',
       product: '',
       note: '',
-      transactionType: 'invoice',
+      creditSideType: '',
+      debitSideType: '',
       amountCredit: '',
       amountDebit: '',
     })
@@ -1729,12 +1798,24 @@ function openSupplierOrderForm() {
 
   function openEditSupplierOrder(order) {
     setEditingSupplierOrder(order)
+
+    const flags = decodeSupplierOrderFlags(order.transactionType || 'invoice')
+
+    let creditSideType = ''
+    if (flags.credit) creditSideType = 'credit'
+    else if (flags.cashIn) creditSideType = 'cashIn'
+
+    let debitSideType = ''
+    if (flags.debit) debitSideType = 'debit'
+    else if (flags.cashOut) debitSideType = 'cashOut'
+
     setSupplierOrderForm({
       date: order.date,
       customerName: order.customerName,
       product: order.product || '',
       note: order.note || '',
-      transactionType: order.transactionType || 'invoice',
+      creditSideType,
+      debitSideType,
       amountCredit: String(order.amountCredit ?? 0),
       amountDebit: String(order.amountDebit ?? 0),
     })
@@ -1778,13 +1859,34 @@ function openSupplierOrderForm() {
   }
     if (!selectedSupplierId) return
 
-    const { date, customerName, product, note, amountCredit, amountDebit, transactionType } =
-      supplierOrderForm
+    const {
+      date,
+      customerName,
+      product,
+      note,
+      amountCredit,
+      amountDebit,
+      creditSideType,
+      debitSideType,
+    } = supplierOrderForm
 
     if (!date || !customerName.trim()) {
       alert('Please fill date and customer name.')
       return
     }
+
+    if (!creditSideType && !debitSideType) {
+      alert('Bitte mindestens einen Typ wählen (Credit / Cash in / Debit / Cash out).')
+      return
+    }
+
+    const transactionType = encodeSupplierOrderFlagsFromForm(supplierOrderForm)
+
+    const amountCreditNum = Number(amountCredit) || 0
+    const amountDebitNum = Number(amountDebit) || 0
+
+    const cashIn = creditSideType === 'cashIn' ? amountCreditNum : 0
+    const cashOut = debitSideType === 'cashOut' ? amountDebitNum : 0
 
     const data = {
       supplierId: selectedSupplierId,
@@ -1792,9 +1894,11 @@ function openSupplierOrderForm() {
       customerName: customerName.trim(),
       product: product.trim(),
       note: (note || '').trim(),
-      transactionType: transactionType || 'invoice',
-      amountCredit: Number(amountCredit) || 0,
-      amountDebit: Number(amountDebit) || 0,
+      transactionType: transactionType,
+      amountCredit: amountCreditNum,
+      amountDebit: amountDebitNum,
+      cashIn,
+      cashOut,
     }
 
     try {
@@ -1810,6 +1914,8 @@ function openSupplierOrderForm() {
           transaction_type: data.transactionType,
           amount_credit: data.amountCredit,
           amount_debit: data.amountDebit,
+          cash_in: data.cashIn,
+          cash_out: data.cashOut,
         }
 
         const { error } = await supabase
@@ -1876,6 +1982,8 @@ function openSupplierOrderForm() {
           transaction_type: data.transactionType,
           amount_credit: data.amountCredit,
           amount_debit: data.amountDebit,
+          cash_in: data.cashIn,
+          cash_out: data.cashOut,
         }
 
         const { data: inserted, error } = await supabase
@@ -1900,6 +2008,8 @@ function openSupplierOrderForm() {
           transactionType: inserted.transaction_type || data.transactionType,
           amountCredit: Number(inserted.amount_credit ?? data.amountCredit),
           amountDebit: Number(inserted.amount_debit ?? data.amountDebit),
+          cashIn: Number(inserted.cash_in ?? data.cashIn),
+          cashOut: Number(inserted.cash_out ?? data.cashOut),
         }
 
         setSupplierOrders((prev) => [...prev, newOrder])
@@ -1912,7 +2022,8 @@ function openSupplierOrderForm() {
         customerName: '',
         product: '',
         note: '',
-        transactionType: 'invoice',
+        creditSideType: '',
+        debitSideType: '',
         amountCredit: '',
         amountDebit: '',
       })
@@ -2433,16 +2544,18 @@ function handleExportSupplierPDF() {
       totalRefundsAll += cash + unpaid
     }
 
-    // SupplierBalance = invoice purchase - return no cash
+    // SupplierBalance = invoice purchase - return (keine Cashflows)
     let supplierBalance = 0
     for (const o of supplierOrders) {
-      const txType = o.transactionType || 'invoice'
-      if (txType === 'invoice') {
+      const flags = decodeSupplierOrderFlags(o.transactionType || 'invoice')
+
+      if (flags.credit) {
         supplierBalance += Number(o.amountCredit) || 0
-      } else if (txType === 'return') {
+      }
+      if (flags.debit) {
         supplierBalance -= Number(o.amountDebit) || 0
       }
-      // payment / refund vom Supplier sind nur Cashflow, nicht Teil der Balance hier
+      // cashIn / cashOut bleiben Cashflow und werden nur im Cash Ledger berücksichtigt
     }
 
     // expenses (alle Ausgaben)
@@ -2480,9 +2593,10 @@ function handleExportSupplierPDF() {
 
     let supplierBalance = 0
     for (const o of supplierOrdersList) {
-      const txType = o.transactionType || 'invoice'
-      if (txType === 'invoice') supplierBalance += Number(o.amountCredit) || 0
-      else if (txType === 'return') supplierBalance -= Number(o.amountDebit) || 0
+      const flags = decodeSupplierOrderFlags(o.transactionType || 'invoice')
+
+      if (flags.credit) supplierBalance += Number(o.amountCredit) || 0
+      if (flags.debit) supplierBalance -= Number(o.amountDebit) || 0
     }
 
     let totalExpenses = 0
@@ -2532,14 +2646,14 @@ function handleExportSupplierPDF() {
       }
     }
 
-    // Supplier orders: only payment/refund affect cash
+    // Supplier orders: cashIn / cashOut wirken auf die Kasse
     for (const o of supplierOrders) {
       const supplier = suppliers.find((s) => s.id === o.supplierId)
       const supplierName = supplier ? supplier.name : ''
       const labelParts = [supplierName, o.customerName, o.product].filter(Boolean)
-      const txType = o.transactionType || 'invoice'
+      const flags = decodeSupplierOrderFlags(o.transactionType || 'invoice')
 
-      if (txType === 'payment') {
+      if (flags.cashOut) {
         const debit = Number(o.amountDebit) || 0
         if (debit > 0) {
           rows.push({
@@ -2551,7 +2665,9 @@ function handleExportSupplierPDF() {
             amountOut: debit,
           })
         }
-      } else if (txType === 'refund') {
+      }
+
+      if (flags.cashIn) {
         const credit = Number(o.amountCredit) || 0
         if (credit > 0) {
           rows.push({
