@@ -741,31 +741,47 @@ useEffect(() => {
 useEffect(() => {
   if (!user?.id) return
 
+  
+  const fetchAllRecords = async (tableName, orderByColumn) => {
+    let allData = []
+    let hasMore = true
+    let page = 0
+    const limit = 1000 
+
+    while (hasMore) {
+      const from = page * limit
+      const to = from + limit - 1
+
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('*')
+        .eq('user_id', user.id)
+        .order(orderByColumn, { ascending: false })
+        .range(from, to)
+
+      if (error) throw error
+
+      if (data && data.length > 0) {
+        allData = [...allData, ...data]
+        
+        if (data.length < limit) {
+          hasMore = false
+        } else {
+          page++
+        }
+      } else {
+        hasMore = false
+      }
+    }
+    return allData
+  }
+
   async function syncSuppliersAndOrders() {
     try {
-      const [{ data: supData, error: supError }, { data: orderData, error: orderError }] =
-        await Promise.all([
-          supabase
-            .from('suppliers')
-            .select('*')
-            .eq('user_id', user.id)
-            .order('created_at', { ascending: false }),
-          supabase
-            .from('order')
-            .select('*')
-            .eq('user_id', user.id)
-            .order('date', { ascending: false }),
-        ])
-
-      if (supError) {
-        console.error('Error loading suppliers from Supabase', supError)
-      }
-      if (orderError) {
-        console.error('Error loading supplier orders from Supabase', orderError)
-      }
-
-      const suppliersRows = supData || []
-      const ordersRows = orderData || []
+      const [suppliersRows, ordersRows] = await Promise.all([
+        fetchAllRecords('suppliers', 'created_at'),
+        fetchAllRecords('order', 'date')
+      ])
 
       const mappedSuppliers = suppliersRows.map((row) => ({
         id: row.id,
@@ -790,6 +806,7 @@ useEffect(() => {
 
       setSuppliers(mappedSuppliers)
       setSupplierOrders(mappedOrders)
+      
     } catch (e) {
       console.error('Failed to sync suppliers/orders with Supabase', e)
     }
