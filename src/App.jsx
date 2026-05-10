@@ -749,12 +749,12 @@ useEffect(() => {
             .from('suppliers')
             .select('*')
             .eq('user_id', user.id)
-            .order('created_at', { ascending: true }),
+            .order('created_at', { ascending: false }),
           supabase
             .from('order')
             .select('*')
             .eq('user_id', user.id)
-            .order('date', { ascending: true }),
+            .order('date', { ascending: false }),
         ])
 
       if (supError) {
