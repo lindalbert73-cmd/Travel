@@ -16,10 +16,6 @@ import { formatMoney } from './utils/money'
 import { STORAGE_KEYS } from './config/storageKeys'
 import { loadAuthConfig, saveAuthConfig } from './utils/authConfig'
 
-
-
-
-
 const COMMON_PRODUCTS = [
   'Ticket Flight',
   'Ticket Bus',
@@ -38,8 +34,40 @@ const COMMON_PRODUCTS = [
   'Translate Others',
 ]
 
+// Helper function to safely bypass Supabase 1000-row limits with pagination
+const fetchPaginatedData = async (tableName, userId, orderByColumn, ascending = false) => {
+  let allData = []
+  let hasMore = true
+  let page = 0
+  const limit = 1000
 
+  while (hasMore) {
+    const from = page * limit
+    const to = from + limit - 1
 
+    const { data, error } = await supabase
+      .from(tableName)
+      .select('*')
+      .eq('user_id', userId)
+      .order(orderByColumn, { ascending })
+      .order('id', { ascending }) // Prevents duplicate/missing rows during pagination
+      .range(from, to)
+
+    if (error) throw error
+
+    if (data && data.length > 0) {
+      allData = [...allData, ...data]
+      if (data.length < limit) {
+        hasMore = false
+      } else {
+        page++
+      }
+    } else {
+      hasMore = false
+    }
+  }
+  return allData
+}
 
 function App() {
   const SESSION_TIMEOUT_SECONDS = 10 * 60
@@ -82,8 +110,6 @@ function App() {
     timezone: 'Europe/Berlin',
     logoUrl: '',
   })
-
-  
 
   const [activeView, setActiveView] = useState('dashboard')
 
@@ -196,7 +222,7 @@ function App() {
     }
   }, [user])
 
-    // Hilfsfunktion: Zähler in State + Supabase updaten
+  // Hilfsfunktion: Zähler in State + Supabase updaten
   async function updateCountersInSupabase(newInvoiceCounter, newCustomerCounter) {
     setNextInvoiceNumber(newInvoiceCounter)
     setNextCustomerNumber(newCustomerCounter)
@@ -229,7 +255,7 @@ function App() {
     note: '',
     cash: '',
   })
-   const [expenseFilterMode, setExpenseFilterMode] = useState('all') // all | today | week | month
+  const [expenseFilterMode, setExpenseFilterMode] = useState('all') // all | today | week | month
   const [expenseFilterFrom, setExpenseFilterFrom] = useState('')
   const [expenseFilterTo, setExpenseFilterTo] = useState('')
   const [expenseSearch, setExpenseSearch] = useState('')
@@ -312,10 +338,8 @@ function App() {
   const [cashLedgerDateTo, setCashLedgerDateTo] = useState('')
   const [cashLedgerSearch, setCashLedgerSearch] = useState('')
 
-
   const [suppliers, setSuppliers] = useState([])
   const [supplierOrders, setSupplierOrders] = useState([])
-
 
   const [showSupplierForm, setShowSupplierForm] = useState(false)
   const [supplierForm, setSupplierForm] = useState({
@@ -391,429 +415,356 @@ function App() {
   const [showSalesImport, setShowSalesImport] = useState(false)
   const [salesImportPreview, setSalesImportPreview] = useState(null)
 
-  
-// check auth session on initial load to avoid login flicker
-useEffect(() => {
-  let isMounted = true
+  // check auth session on initial load to avoid login flicker
+  useEffect(() => {
+    let isMounted = true
 
     async function loadSession() {
-    try {
-      const { data } = await supabase.auth.getUser()
-      const supaUser = data?.user
-
-      // Keine Supabase-Session vorhanden
-      if (!supaUser) {
-        if (isMounted) {
-          setUser(null)
-        }
-        return
-      }
-
-      // Profil holen, um last_activity_at zu prüfen
-      let profile = null
       try {
-        const { data: profileData, error: profileError } = await supabase
-          .from('profiles')
-          .select('last_activity_at')
-          .eq('user_id', supaUser.id)
-          .maybeSingle()
+        const { data } = await supabase.auth.getUser()
+        const supaUser = data?.user
 
-        if (profileError) {
-          console.error('Error loading profile in loadSession', profileError)
-        } else {
-          profile = profileData
-        }
-      } catch (e) {
-        console.error('Unexpected error loading profile in loadSession', e)
-      }
-
-      // Timeout: 10 Minuten
-      const TIMEOUT_MS = 10 * 60 * 1000
-
-      if (profile?.last_activity_at) {
-        const last = new Date(profile.last_activity_at).getTime()
-        const diff = Date.now() - last
-
-        if (diff > TIMEOUT_MS) {
-          // Session ist global abgelaufen -> hart ausloggen
-          await supabase.auth.signOut()
+        // Keine Supabase-Session vorhanden
+        if (!supaUser) {
           if (isMounted) {
             setUser(null)
           }
           return
         }
-      }
 
-      // Session ist ok -> User setzen
-      if (isMounted) {
-        setUser({ id: supaUser.id, email: supaUser.email || '' })
-      }
-    } catch (e) {
-      console.error('Error in loadSession', e)
-      if (isMounted) {
-        setUser(null)
-      }
-    } finally {
-      if (isMounted) {
-        setAuthInitializing(false)
+        // Profil holen, um last_activity_at zu prüfen
+        let profile = null
+        try {
+          const { data: profileData, error: profileError } = await supabase
+            .from('profiles')
+            .select('last_activity_at')
+            .eq('user_id', supaUser.id)
+            .maybeSingle()
+
+          if (profileError) {
+            console.error('Error loading profile in loadSession', profileError)
+          } else {
+            profile = profileData
+          }
+        } catch (e) {
+          console.error('Unexpected error loading profile in loadSession', e)
+        }
+
+        // Timeout: 10 Minuten
+        const TIMEOUT_MS = 10 * 60 * 1000
+
+        if (profile?.last_activity_at) {
+          const last = new Date(profile.last_activity_at).getTime()
+          const diff = Date.now() - last
+
+          if (diff > TIMEOUT_MS) {
+            // Session ist global abgelaufen -> hart ausloggen
+            await supabase.auth.signOut()
+            if (isMounted) {
+              setUser(null)
+            }
+            return
+          }
+        }
+
+        // Session ist ok -> User setzen
+        if (isMounted) {
+          setUser({ id: supaUser.id, email: supaUser.email || '' })
+        }
+      } catch (e) {
+        console.error('Error in loadSession', e)
+        if (isMounted) {
+          setUser(null)
+        }
+      } finally {
+        if (isMounted) {
+          setAuthInitializing(false)
+        }
       }
     }
-  }
 
+    loadSession()
 
-  loadSession()
-
-  return () => {
-    isMounted = false
-  }
-}, [])
-
-
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   // Robuster Auto-Logout basierend auf Zeitstempeln (funktioniert auch auf Handy)
-useEffect(() => {
-  if (!user) return;
+  useEffect(() => {
+    if (!user) return;
 
-  const TIMEOUT = 10 * 60 * 1000; // 10 Minuten
-  const activityEvents = [
-    'touchstart', 'touchmove', 'scroll',
-    'click', 'keydown', 'mousemove'
-  ];
+    const TIMEOUT = 10 * 60 * 1000; // 10 Minuten
+    const activityEvents = [
+      'touchstart', 'touchmove', 'scroll',
+      'click', 'keydown', 'mousemove'
+    ];
 
     const updateActivity = () => {
-    lastActiveRef.current = Date.now();
-    // zusätzlich Server informieren (globaler Timeout)
-    pingActivity(user.id);
-  };
+      lastActiveRef.current = Date.now();
+      // zusätzlich Server informieren (globaler Timeout)
+      pingActivity(user.id);
+    };
 
-  // Activity registrieren
-  activityEvents.forEach(evt =>
-    window.addEventListener(evt, updateActivity)
-  );
+    // Activity registrieren
+    activityEvents.forEach(evt =>
+      window.addEventListener(evt, updateActivity)
+    );
 
-  // Alle 3 Sekunden prüfen
-  const interval = setInterval(() => {
-    if (Date.now() - lastActiveRef.current > TIMEOUT) {
-      handleLogout();
-    }
-  }, 3000);
-
-  // Wenn Tab/App reaktiviert wird
-  const visHandler = () => {
-    if (document.visibilityState === 'visible') {
+    // Alle 3 Sekunden prüfen
+    const interval = setInterval(() => {
       if (Date.now() - lastActiveRef.current > TIMEOUT) {
         handleLogout();
       }
-    }
-  };
-  document.addEventListener('visibilitychange', visHandler);
+    }, 3000);
 
-  return () => {
-    activityEvents.forEach(evt =>
-      window.removeEventListener(evt, updateActivity)
-    );
-    clearInterval(interval);
-    document.removeEventListener('visibilitychange', visHandler);
-  };
-}, [user]);
-
-// Sichtbarer Countdown basierend auf lastActiveRef
-useEffect(() => {
-  if (!user) {
-    setSecondsLeft(0);
-    return;
-  }
-
-  const TIMEOUT = 10 * 60 * 1000; // 10 Minuten in ms
-
-  const id = setInterval(() => {
-    const diffMs = Date.now() - lastActiveRef.current;
-    const remainingMs = TIMEOUT - diffMs;
-    const remainingSec = Math.max(0, Math.floor(remainingMs / 1000));
-    setSecondsLeft(remainingSec);
-  }, 1000);
-
-  return () => clearInterval(id);
-}, [user]);
-
-
-
-
-
-// load profile from Supabase whenever we have a logged-in user
-useEffect(() => {
-  if (!user || !user.id) {
-    setRole('user')          // NEU: wenn kein User, sicherheitshalber wieder user
-    return
-  }
-
-  let cancelled = false
-
-  async function loadProfile() {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .maybeSingle()
-
-      if (error) {
-        console.error('Error loading profile from Supabase', error)
-        return
+    // Wenn Tab/App reaktiviert wird
+    const visHandler = () => {
+      if (document.visibilityState === 'visible') {
+        if (Date.now() - lastActiveRef.current > TIMEOUT) {
+          handleLogout();
+        }
       }
+    };
+    document.addEventListener('visibilitychange', visHandler);
 
-      if (cancelled) return
+    return () => {
+      activityEvents.forEach(evt =>
+        window.removeEventListener(evt, updateActivity)
+      );
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', visHandler);
+    };
+  }, [user]);
 
-      if (!data) {
-        setRole('user')      // NEU: kein Profil -> keine Admin-Rechte
-        setProfileForm((prev) => ({
-          ...prev,
-          programName: 'Control console',
-          email: user.email || '',
-          businessName: '',
-          phone: '',
-          address: '',
-          timezone: 'Europe/Berlin',
-          logoUrl: '',
+  // Sichtbarer Countdown basierend auf lastActiveRef
+  useEffect(() => {
+    if (!user) {
+      setSecondsLeft(0);
+      return;
+    }
+
+    const TIMEOUT = 10 * 60 * 1000; // 10 Minuten in ms
+
+    const id = setInterval(() => {
+      const diffMs = Date.now() - lastActiveRef.current;
+      const remainingMs = TIMEOUT - diffMs;
+      const remainingSec = Math.max(0, Math.floor(remainingMs / 1000));
+      setSecondsLeft(remainingSec);
+    }, 1000);
+
+    return () => clearInterval(id);
+  }, [user]);
+
+  // load profile from Supabase whenever we have a logged-in user
+  useEffect(() => {
+    if (!user || !user.id) {
+      setRole('user')          // NEU: wenn kein User, sicherheitshalber wieder user
+      return
+    }
+
+    let cancelled = false
+
+    async function loadProfile() {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('user_id', user.id)
+          .maybeSingle()
+
+        if (error) {
+          console.error('Error loading profile from Supabase', error)
+          return
+        }
+
+        if (cancelled) return
+
+        if (!data) {
+          setRole('user')      // NEU: kein Profil -> keine Admin-Rechte
+          setProfileForm((prev) => ({
+            ...prev,
+            programName: 'Control console',
+            email: user.email || '',
+            businessName: '',
+            phone: '',
+            address: '',
+            timezone: 'Europe/Berlin',
+            logoUrl: '',
+          }))
+          setProgramName('Control console')
+        } else {
+          setRole(data.role || 'user')   // NEU: Rolle aus DB übernehmen
+
+          setProfileForm({
+            programName: data.program_name || 'Control console',
+            email: data.owner_email || user.email || '',
+            businessName: data.business_name || '',
+            phone: data.phone || '',
+            address: data.address || '',
+            timezone: data.timezone || 'Europe/Berlin',
+            logoUrl: data.logo_url || '',
+          })
+          setProgramName(data.program_name || 'Control console')
+        }
+      } catch (err) {
+        console.error('Unexpected error loading profile', err)
+      }
+    }
+
+    loadProfile()
+
+    return () => {
+      cancelled = true
+    }
+  }, [user])
+
+
+  // sync sales with Supabase (cloud) when user is known
+  useEffect(() => {
+    if (!user?.id) return
+
+    async function syncSalesWithSupabase() {
+      try {
+        const data = await fetchPaginatedData('sales', user.id, 'created_at', true)
+
+        if (!data || data.length === 0) {
+          setSales([])
+          return
+        }
+
+        const mapped = data.map((row) => ({
+          id: row.id,
+          invoiceNo: row.invoice_no || '',
+          customerNo: row.customer_no || '',
+          date: row.date || '',
+          customerName: row.customer_name || '',
+          product: row.product || '',
+          note: row.note || '',
+          total: String(row.total_amount ?? ''),
+          cash: String(row.cash ?? ''),
+          unpaid: String(row.outstanding ?? ''),
         }))
-        setProgramName('Control console')
-      } else {
-        setRole(data.role || 'user')   // NEU: Rolle aus DB übernehmen
-
-        setProfileForm({
-          programName: data.program_name || 'Control console',
-          email: data.owner_email || user.email || '',
-          businessName: data.business_name || '',
-          phone: data.phone || '',
-          address: data.address || '',
-          timezone: data.timezone || 'Europe/Berlin',
-          logoUrl: data.logo_url || '',
-        })
-        setProgramName(data.program_name || 'Control console')
+        setSales(mapped)
+      } catch (e) {
+        console.error('Failed to sync sales with Supabase', e)
       }
-    } catch (err) {
-      console.error('Unexpected error loading profile', err)
     }
-  }
 
-  loadProfile()
+    syncSalesWithSupabase()
+  }, [user])
 
-  return () => {
-    cancelled = true
-  }
-}, [user])
-
-
- // sync sales with Supabase (cloud) when user is known
-useEffect(() => {
-  if (!user?.id) return
-
-  async function syncSalesWithSupabase() {
-    try {
-      const { data, error } = await supabase
-        .from('sales')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: true })
-
-      if (error) {
-        console.error('Error loading sales from Supabase', error)
-        return
-      }
-
-      if (!data) {
-        setSales([])
-        return
-      }
-
-      const mapped = data.map((row) => ({
-        id: row.id,
-        invoiceNo: row.invoice_no || '',
-        customerNo: row.customer_no || '',
-        date: row.date || '',
-        customerName: row.customer_name || '',
-        product: row.product || '',
-        note: row.note || '',
-        total: String(row.total_amount ?? ''),
-        cash: String(row.cash ?? ''),
-        unpaid: String(row.outstanding ?? ''),
-      }))
-      setSales(mapped)
-    } catch (e) {
-      console.error('Failed to sync sales with Supabase', e)
-    }
-  }
-
-  syncSalesWithSupabase()
-}, [user])
 
   // sync refunds with Supabase (cloud) when user is known
-useEffect(() => {
-  if (!user?.id) return
+  useEffect(() => {
+    if (!user?.id) return
 
-  async function syncRefundsWithSupabase() {
-    try {
-      const { data, error } = await supabase
-        .from('refunds')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
+    async function syncRefundsWithSupabase() {
+      try {
+        const data = await fetchPaginatedData('refunds', user.id, 'created_at', false)
 
-      if (error) {
-        console.error('Error loading refunds from Supabase', error)
-        return
+        if (!data || data.length === 0) {
+          setRefunds([])
+          return
+        }
+
+        const mapped = data.map((row) => ({
+          id: row.id,
+          invoiceNo: row.invoice_no || '',
+          customerNo: row.customer_no || '',
+          date: row.date || '',
+          customerName: row.customer_name || '',
+          product: row.product || '',
+          note: row.note || '',
+          total: Number(row.total_amount ?? 0),
+          cash: Number(row.cash ?? 0),
+          unpaid: Number(row.unpaid ?? 0),
+        }))
+
+        setRefunds(mapped)
+      } catch (e) {
+        console.error('Failed to sync refunds with Supabase', e)
       }
-
-      if (!data) {
-        setRefunds([])
-        return
-      }
-
-      const mapped = data.map((row) => ({
-        id: row.id,
-        invoiceNo: row.invoice_no || '',
-        customerNo: row.customer_no || '',
-        date: row.date || '',
-        customerName: row.customer_name || '',
-        product: row.product || '',
-        note: row.note || '',
-        total: Number(row.total_amount ?? 0),
-        cash: Number(row.cash ?? 0),
-        unpaid: Number(row.unpaid ?? 0),
-      }))
-
-      setRefunds(mapped)
-    } catch (e) {
-      console.error('Failed to sync refunds with Supabase', e)
     }
-  }
 
-  syncRefundsWithSupabase()
-}, [user])
-
+    syncRefundsWithSupabase()
+  }, [user])
 
 
   // sync expenses with Supabase (cloud) when user is known
-useEffect(() => {
-  if (!user?.id) return
+  useEffect(() => {
+    if (!user?.id) return
 
-  async function syncExpensesWithSupabase() {
-    try {
-      const { data, error } = await supabase
-        .from('expenses')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('date', { ascending: false })
+    async function syncExpensesWithSupabase() {
+      try {
+        const data = await fetchPaginatedData('expenses', user.id, 'date', false)
 
-      if (error) {
-        console.error('Error loading expenses from Supabase', error)
-        return
+        if (!data || data.length === 0) {
+          setExpenses([])
+          return
+        }
+
+        const mapped = data.map((row) => ({
+          id: row.id,
+          date: row.date || '',
+          description: row.description || '',
+          note: row.note || '',
+          cash: String(row.cash ?? ''),
+          category: row.category || '',
+        }))
+
+        setExpenses(mapped)
+      } catch (e) {
+        console.error('Failed to sync expenses with Supabase', e)
       }
-
-      if (!data) {
-        setExpenses([])
-        return
-      }
-
-      const mapped = data.map((row) => ({
-        id: row.id,
-        date: row.date || '',
-        description: row.description || '',
-        note: row.note || '',
-        cash: String(row.cash ?? ''),
-        category: row.category || '',
-      }))
-
-      setExpenses(mapped)
-    } catch (e) {
-      console.error('Failed to sync expenses with Supabase', e)
     }
-  }
 
-  syncExpensesWithSupabase()
-}, [user])
-
-
-
+    syncExpensesWithSupabase()
+  }, [user])
 
 
   // sync suppliers and supplier orders with Supabase (cloud) when user is known
-useEffect(() => {
-  if (!user?.id) return
+  useEffect(() => {
+    if (!user?.id) return
 
-  
-  const fetchAllRecords = async (tableName, orderByColumn) => {
-    let allData = []
-    let hasMore = true
-    let page = 0
-    const limit = 1000 
+    async function syncSuppliersAndOrders() {
+      try {
+        const [suppliersRows, ordersRows] = await Promise.all([
+          fetchPaginatedData('suppliers', user.id, 'created_at', false),
+          fetchPaginatedData('order', user.id, 'date', false)
+        ])
 
-    while (hasMore) {
-      const from = page * limit
-      const to = from + limit - 1
+        const mappedSuppliers = suppliersRows.map((row) => ({
+          id: row.id,
+          name: row.supplier_name || '',
+          note: row.note || '',
+          debit: Number(row.debit ?? 0),
+          credit: Number(row.credit ?? 0),
+        }))
 
-      const { data, error } = await supabase
-        .from(tableName)
-        .select('*')
-        .eq('user_id', user.id)
-        .order(orderByColumn, { ascending: false })
-        .range(from, to)
+        const mappedOrders = ordersRows.map((row) => ({
+          id: row.id,
+          supplierId: row.supplier_id,
+          date: row.date || '',
+          customerName: row.customer_name || '',
+          product: row.product || '',
+          transactionType: row.transaction_type || 'invoice',
+          amountCredit: Number(row.amount_credit ?? 0),
+          amountDebit: Number(row.amount_debit ?? 0),
+          cashIn: Number(row.cash_in ?? 0),
+          cashOut: Number(row.cash_out ?? 0),
+        }))
 
-      if (error) throw error
-
-      if (data && data.length > 0) {
-        allData = [...allData, ...data]
+        setSuppliers(mappedSuppliers)
+        setSupplierOrders(mappedOrders)
         
-        if (data.length < limit) {
-          hasMore = false
-        } else {
-          page++
-        }
-      } else {
-        hasMore = false
+      } catch (e) {
+        console.error('Failed to sync suppliers/orders with Supabase', e)
       }
     }
-    return allData
-  }
 
-  async function syncSuppliersAndOrders() {
-    try {
-      const [suppliersRows, ordersRows] = await Promise.all([
-        fetchAllRecords('suppliers', 'created_at'),
-        fetchAllRecords('order', 'date')
-      ])
-
-      const mappedSuppliers = suppliersRows.map((row) => ({
-        id: row.id,
-        name: row.supplier_name || '',
-        note: row.note || '',
-        debit: Number(row.debit ?? 0),
-        credit: Number(row.credit ?? 0),
-      }))
-
-      const mappedOrders = ordersRows.map((row) => ({
-        id: row.id,
-        supplierId: row.supplier_id,
-        date: row.date || '',
-        customerName: row.customer_name || '',
-        product: row.product || '',
-        transactionType: row.transaction_type || 'invoice',
-        amountCredit: Number(row.amount_credit ?? 0),
-        amountDebit: Number(row.amount_debit ?? 0),
-        cashIn: Number(row.cash_in ?? 0),
-        cashOut: Number(row.cash_out ?? 0),
-      }))
-
-      setSuppliers(mappedSuppliers)
-      setSupplierOrders(mappedOrders)
-      
-    } catch (e) {
-      console.error('Failed to sync suppliers/orders with Supabase', e)
-    }
-  }
-
-  syncSuppliersAndOrders()
-}, [user])
+    syncSuppliersAndOrders()
+  }, [user])
 
   // helpers
   function recalcSalesUnpaid(form) {
@@ -829,6 +780,7 @@ useEffect(() => {
     const unpaid = total - cash
     return { ...form, unpaid: unpaid.toFixed(2) }
   }
+
   function getSupplierTotals(supplier, allOrders) {
     if (!supplier) {
       return { totalCredit: 0, totalDebit: 0, balance: 0 }
@@ -855,13 +807,12 @@ useEffect(() => {
 
 
   // navigation helpers (sidebar)
-   async function handleAuthSuccess(info) {
+  async function handleAuthSuccess(info) {
     setUser({ id: info.id, email: info.email })
     lastActiveRef.current = Date.now()
     await pingActivity(info.id)   // initial last_activity_at setzen
     setActiveView('dashboard')
   }
-
 
   async function handleLogout() {
     try {
@@ -880,7 +831,7 @@ useEffect(() => {
     setShowSalesImport(false)
     setEditingSale(null)
     setEditingRefund(null)
-     setIsSidebarOpen(false)
+    setIsSidebarOpen(false)
   }
 
   function goSalesOverview() {
@@ -888,7 +839,7 @@ useEffect(() => {
     setShowSalesForm(false)
     setShowSalesImport(false)
     setEditingSale(null)
-     setIsSidebarOpen(false)
+    setIsSidebarOpen(false)
   }
 
   function goSalesNew() {
@@ -923,7 +874,7 @@ useEffect(() => {
     setActiveView('returns')
     setShowRefundForm(false)
     setEditingRefund(null)
-     setIsSidebarOpen(false)
+    setIsSidebarOpen(false)
   }
 
   function goSuppliersOverview() {
@@ -933,7 +884,7 @@ useEffect(() => {
     setShowSupplierOrderForm(false)
     setEditingSupplier(null)
     setEditingSupplierOrder(null)
-     setIsSidebarOpen(false)
+    setIsSidebarOpen(false)
   }
 
   function openSupplierDetail(id) {
@@ -964,7 +915,6 @@ useEffect(() => {
   }
 
   // editing helpers
-
   function openHistory(entityType, entity, title) {
     if (!entity || entity.id == null) return
     setHistoryModal({
@@ -1024,39 +974,102 @@ useEffect(() => {
   }
 
   // submit handlers
-async function handleSalesSubmit(e) {
-  e.preventDefault()
-  const { date, customerName, product, total, cash, unpaid, note } =
-    salesForm
+  async function handleSalesSubmit(e) {
+    e.preventDefault()
+    const { date, customerName, product, total, cash, unpaid, note } =
+      salesForm
 
-  let invoiceNo = salesForm.invoiceNo
-  let customerNo = salesForm.customerNo
+    let invoiceNo = salesForm.invoiceNo
+    let customerNo = salesForm.customerNo
 
-  if (!editingSale) {
-    invoiceNo = `INV-${String(nextInvoiceNumber).padStart(4, '0')}`
-    customerNo = `C-${String(nextCustomerNumber).padStart(4, '0')}`
-  }
+    if (!editingSale) {
+      invoiceNo = `INV-${String(nextInvoiceNumber).padStart(4, '0')}`
+      customerNo = `C-${String(nextCustomerNumber).padStart(4, '0')}`
+    }
 
-  if (!customerName.trim() || !product.trim() || !date) {
-    alert('Please fill in all required fields.')
-    return
-  }
+    if (!customerName.trim() || !product.trim() || !date) {
+      alert('Please fill in all required fields.')
+      return
+    }
 
-  const saleData = {
-    invoiceNo,
-    customerNo,
-    date,
-    customerName: customerName.trim(),
-    product: product.trim(),
-    total: Number(total) || 0,
-    cash: Number(cash) || 0,
-    unpaid: Number(unpaid) || 0,
-    note: note ? note.trim() : '',
-  }
+    const saleData = {
+      invoiceNo,
+      customerNo,
+      date,
+      customerName: customerName.trim(),
+      product: product.trim(),
+      total: Number(total) || 0,
+      cash: Number(cash) || 0,
+      unpaid: Number(unpaid) || 0,
+      note: note ? note.trim() : '',
+    }
 
-  try {
-    if (editingSale) {
-      // UPDATE in Supabase
+    try {
+      if (editingSale) {
+        // UPDATE in Supabase
+        const payload = {
+          user_id: user.id,
+          invoice_no: saleData.invoiceNo,
+          customer_no: saleData.customerNo,
+          date: saleData.date,
+          customer_name: saleData.customerName,
+          product: saleData.product,
+          note: saleData.note,
+          total_amount: saleData.total,
+          cash: saleData.cash,
+          outstanding: saleData.unpaid,
+        }
+
+        const { error } = await supabase
+          .from('sales')
+          .update(payload)
+          .eq('id', editingSale.id)
+          .eq('user_id', user.id)
+
+        if (error) {
+          console.error('Fehler beim Aktualisieren der Sale in Supabase', error)
+          alert('Fehler beim Speichern der Änderung (Supabase). Details in der Konsole.')
+          return
+        }
+
+        // Change-Log behalten
+        const oldSale = editingSale
+        const updatedSale = { ...oldSale, ...saleData }
+
+        const fieldsToTrack = ['date', 'customerName', 'product', 'total', 'cash', 'unpaid', 'note']
+        const changes = []
+
+        fieldsToTrack.forEach((field) => {
+          const oldValue = oldSale[field]
+          const newValue = updatedSale[field]
+          if (String(oldValue ?? '') !== String(newValue ?? '')) {
+            changes.push({ field, oldValue, newValue })
+          }
+        })
+
+        if (changes.length) {
+          setChangeLog((prev) => {
+            const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
+            return [
+              ...prev,
+              {
+                id: nextId,
+                entityType: 'sale',
+                entityId: oldSale.id,
+                invoiceNo: oldSale.invoiceNo,
+                changedAt: new Date().toISOString(),
+                changes,
+              },
+            ]
+          })
+        }
+
+        setSales((prev) => prev.map((s) => (s.id === editingSale.id ? { ...s, ...saleData } : s)))
+        setEditingSale(null)
+        return
+      }
+
+      // NEUE Sale in Supabase
       const payload = {
         user_id: user.id,
         invoice_no: saleData.invoiceNo,
@@ -1070,122 +1083,58 @@ async function handleSalesSubmit(e) {
         outstanding: saleData.unpaid,
       }
 
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('sales')
-        .update(payload)
-        .eq('id', editingSale.id)
-        .eq('user_id', user.id)
+        .insert(payload)
+        .select()
+        .single()
 
       if (error) {
-        console.error('Fehler beim Aktualisieren der Sale in Supabase', error)
-        alert('Fehler beim Speichern der Änderung (Supabase). Details in der Konsole.')
+        console.error('Fehler beim Speichern der Sale in Supabase', error)
+        alert('Fehler beim Speichern. Details in der Konsole.')
         return
       }
 
-      // Change-Log behalten
-      const oldSale = editingSale
-      const updatedSale = { ...oldSale, ...saleData }
-
-      const fieldsToTrack = ['date', 'customerName', 'product', 'total', 'cash', 'unpaid', 'note']
-      const changes = []
-
-      fieldsToTrack.forEach((field) => {
-        const oldValue = oldSale[field]
-        const newValue = updatedSale[field]
-        if (String(oldValue ?? '') !== String(newValue ?? '')) {
-          changes.push({ field, oldValue, newValue })
-        }
-      })
-
-      if (changes.length) {
-        setChangeLog((prev) => {
-          const nextId = prev.length ? Math.max(...prev.map((l) => l.id || 0)) + 1 : 1
-          return [
-            ...prev,
-            {
-              id: nextId,
-              entityType: 'sale',
-              entityId: oldSale.id,
-              invoiceNo: oldSale.invoiceNo,
-              changedAt: new Date().toISOString(),
-              changes,
-            },
-          ]
-        })
+      const newSale = {
+        id: data.id,
+        invoiceNo: data.invoice_no || '',
+        customerNo: data.customer_no || '',
+        date: data.date || '',
+        customerName: data.customer_name || '',
+        product: data.product || '',
+        note: data.note || '',
+        total: String(data.total_amount ?? ''),
+        cash: String(data.cash ?? ''),
+        unpaid: String(data.outstanding ?? ''),
       }
 
-      setSales((prev) => prev.map((s) => (s.id === editingSale.id ? { ...s, ...saleData } : s)))
-      setEditingSale(null)
-      return
+      setSales((prev) => [...prev, newSale])
+
+      const newNextInvoice = nextInvoiceNumber + 1
+      const newNextCustomer = nextCustomerNumber + 1
+      await updateCountersInSupabase(newNextInvoice, newNextCustomer)
+
+      const newInvoice = `INV-${String(newNextInvoice).padStart(4, '0')}`
+      const newCustomer = `C-${String(newNextCustomer).padStart(4, '0')}`
+
+      setSalesForm(
+        recalcSalesUnpaid({
+          invoiceNo: newInvoice,
+          customerNo: newCustomer,
+          date: getTodayISO(),
+          customerName: '',
+          product: '',
+          total: '',
+          cash: '',
+          unpaid: '',
+          note: '',
+        }),
+      )
+    } catch (err) {
+      console.error('Unerwarteter Fehler in handleSalesSubmit', err)
+      alert('Unerwarteter Fehler beim Speichern. Details in der Konsole.')
     }
-
-    // NEUE Sale in Supabase
-    const payload = {
-      user_id: user.id,
-      invoice_no: saleData.invoiceNo,
-      customer_no: saleData.customerNo,
-      date: saleData.date,
-      customer_name: saleData.customerName,
-      product: saleData.product,
-      note: saleData.note,
-      total_amount: saleData.total,
-      cash: saleData.cash,
-      outstanding: saleData.unpaid,
-    }
-
-    const { data, error } = await supabase
-      .from('sales')
-      .insert(payload)
-      .select()
-      .single()
-
-    if (error) {
-      console.error('Fehler beim Speichern der Sale in Supabase', error)
-      alert('Fehler beim Speichern. Details in der Konsole.')
-      return
-    }
-
-    const newSale = {
-      id: data.id,
-      invoiceNo: data.invoice_no || '',
-      customerNo: data.customer_no || '',
-      date: data.date || '',
-      customerName: data.customer_name || '',
-      product: data.product || '',
-      note: data.note || '',
-      total: String(data.total_amount ?? ''),
-      cash: String(data.cash ?? ''),
-      unpaid: String(data.outstanding ?? ''),
-    }
-
-    setSales((prev) => [...prev, newSale])
-
-    const newNextInvoice = nextInvoiceNumber + 1
-    const newNextCustomer = nextCustomerNumber + 1
-    await updateCountersInSupabase(newNextInvoice, newNextCustomer)
-
-    const newInvoice = `INV-${String(newNextInvoice).padStart(4, '0')}`
-    const newCustomer = `C-${String(newNextCustomer).padStart(4, '0')}`
-
-    setSalesForm(
-      recalcSalesUnpaid({
-        invoiceNo: newInvoice,
-        customerNo: newCustomer,
-        date: getTodayISO(),
-        customerName: '',
-        product: '',
-        total: '',
-        cash: '',
-        unpaid: '',
-        note: '',
-      }),
-    )
-  } catch (err) {
-    console.error('Unerwarteter Fehler in handleSalesSubmit', err)
-    alert('Unerwarteter Fehler beim Speichern. Details in der Konsole.')
   }
-}
-
 
   function handleRefundInvoiceChange(invoiceNo) {
     const sale = sales.find((s) => s.invoiceNo === invoiceNo)
@@ -1201,7 +1150,6 @@ async function handleSalesSubmit(e) {
     )
   }
 
-  
   async function handleRefundSubmit(e) {
     e.preventDefault()
     const { invoiceNo, date, customerNo, customerName, product, total, cash, unpaid, note } =
@@ -1355,18 +1303,16 @@ async function handleSalesSubmit(e) {
     }
   }
 
-
-
   async function handleExpenseSubmit(e) {
-  e.preventDefault()
+    e.preventDefault()
 
-  if (!user?.id) {
-    alert('Kein Benutzer eingeloggt – bitte neu einloggen.')
-    return
-  }
+    if (!user?.id) {
+      alert('Kein Benutzer eingeloggt – bitte neu einloggen.')
+      return
+    }
 
-  const cash = Number(expenseForm.cash) || 0
-  const date = expenseForm.date || getTodayISO()
+    const cash = Number(expenseForm.cash) || 0
+    const date = expenseForm.date || getTodayISO()
 
     const baseData = {
       date,
@@ -1499,7 +1445,6 @@ async function handleSalesSubmit(e) {
     }
   }
 
-  
   async function deleteRefund(id) {
     if (!window.confirm('Delete this refund entry?')) return
 
@@ -1522,7 +1467,6 @@ async function handleSalesSubmit(e) {
       alert('Unerwarteter Fehler beim Löschen. Details in der Konsole.')
     }
   }
-
 
   function openEditExpense(exp) {
     setEditingExpense(exp)
@@ -1558,7 +1502,7 @@ async function handleSalesSubmit(e) {
     }
   }
 
-    async function deleteSupplier(id) {
+  async function deleteSupplier(id) {
     const hasOrders = supplierOrders.some((o) => o.supplierId === id)
     if (hasOrders) {
       alert('Cannot delete supplier with existing orders.')
@@ -1586,7 +1530,7 @@ async function handleSalesSubmit(e) {
     }
   }
 
-function openEditSupplierForm(supplier) {
+  function openEditSupplierForm(supplier) {
     const hasOrders = supplierOrders.some((o) => o.supplierId === supplier.id)
     if (hasOrders) {
       alert('Cannot edit supplier that has orders.')
@@ -1607,13 +1551,13 @@ function openEditSupplierForm(supplier) {
     setEditingSupplier(null)
   }
 
-    async function handleSupplierSubmit(e) {
-  e.preventDefault()
+  async function handleSupplierSubmit(e) {
+    e.preventDefault()
 
-  if (!user?.id) {
-    alert('Kein Benutzer eingeloggt – bitte neu einloggen.')
-    return
-  }
+    if (!user?.id) {
+      alert('Kein Benutzer eingeloggt – bitte neu einloggen.')
+      return
+    }
     const { name, note, debit, credit } = supplierForm
 
     if (!name.trim()) {
@@ -1732,72 +1676,71 @@ function openEditSupplierForm(supplier) {
     }
   }
 
-
-function decodeSupplierOrderFlags(txType) {
-  const flags = {
-    credit: false,
-    cashIn: false,
-    debit: false,
-    cashOut: false,
-  }
-
-  if (!txType) return flags
-
-  if (typeof txType === 'string' && txType.trim().startsWith('{')) {
-    try {
-      const parsed = JSON.parse(txType)
-      return {
-        credit: !!parsed.credit,
-        cashIn: !!parsed.cashIn,
-        debit: !!parsed.debit,
-        cashOut: !!parsed.cashOut,
-      }
-    } catch (e) {
-      console.error('Could not parse supplier order transactionType JSON', e, txType)
-      return flags
+  function decodeSupplierOrderFlags(txType) {
+    const flags = {
+      credit: false,
+      cashIn: false,
+      debit: false,
+      cashOut: false,
     }
+
+    if (!txType) return flags
+
+    if (typeof txType === 'string' && txType.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(txType)
+        return {
+          credit: !!parsed.credit,
+          cashIn: !!parsed.cashIn,
+          debit: !!parsed.debit,
+          cashOut: !!parsed.cashOut,
+        }
+      } catch (e) {
+        console.error('Could not parse supplier order transactionType JSON', e, txType)
+        return flags
+      }
+    }
+
+    switch (txType) {
+      case 'invoice':
+        flags.credit = true
+        break
+      case 'refund':
+        flags.cashIn = true
+        break
+      case 'return':
+        flags.debit = true
+        break
+      case 'payment':
+        flags.cashOut = true
+        break
+      default:
+        break
+    }
+
+    return flags
   }
 
-  switch (txType) {
-    case 'invoice':
-      flags.credit = true
-      break
-    case 'refund':
-      flags.cashIn = true
-      break
-    case 'return':
-      flags.debit = true
-      break
-    case 'payment':
-      flags.cashOut = true
-      break
-    default:
-      break
+  function encodeSupplierOrderFlagsFromForm(form) {
+    const creditSide = form.creditSideType || ''
+    const debitSide = form.debitSideType || ''
+
+    const flags = {
+      credit: creditSide === 'credit',
+      cashIn: creditSide === 'cashIn',
+      debit: debitSide === 'debit',
+      cashOut: debitSide === 'cashOut',
+    }
+
+    if (flags.credit && !flags.cashIn && !flags.debit && !flags.cashOut) return 'invoice'
+    if (!flags.credit && flags.cashIn && !flags.debit && !flags.cashOut) return 'refund'
+    if (!flags.credit && !flags.cashIn && flags.debit && !flags.cashOut) return 'return'
+    if (!flags.credit && !flags.cashIn && !flags.debit && flags.cashOut) return 'payment'
+
+    return JSON.stringify(flags)
   }
 
-  return flags
-}
-
-function encodeSupplierOrderFlagsFromForm(form) {
-  const creditSide = form.creditSideType || ''
-  const debitSide = form.debitSideType || ''
-
-  const flags = {
-    credit: creditSide === 'credit',
-    cashIn: creditSide === 'cashIn',
-    debit: debitSide === 'debit',
-    cashOut: debitSide === 'cashOut',
-  }
-
-  if (flags.credit && !flags.cashIn && !flags.debit && !flags.cashOut) return 'invoice'
-  if (!flags.credit && flags.cashIn && !flags.debit && !flags.cashOut) return 'refund'
-  if (!flags.credit && !flags.cashIn && flags.debit && !flags.cashOut) return 'return'
-  if (!flags.credit && !flags.cashIn && !flags.debit && flags.cashOut) return 'payment'
-
-  return JSON.stringify(flags)
-}
-
-function openSupplierOrderForm() {
+  function openSupplierOrderForm() {
     if (!selectedSupplierId) return
     setEditingSupplierOrder(null)
     setSupplierOrderForm({
@@ -1844,7 +1787,7 @@ function openSupplierOrderForm() {
     setEditingSupplierOrder(null)
   }
 
-    async function deleteSupplierOrder(id) {
+  async function deleteSupplierOrder(id) {
     if (!window.confirm('Delete this order?')) return
 
     try {
@@ -1868,12 +1811,12 @@ function openSupplierOrderForm() {
   }
 
   async function handleSupplierOrderSubmit(e) {
-  e.preventDefault()
+    e.preventDefault()
 
-  if (!user?.id) {
-    alert('Kein Benutzer eingeloggt – bitte neu einloggen.')
-    return
-  }
+    if (!user?.id) {
+      alert('Kein Benutzer eingeloggt – bitte neu einloggen.')
+      return
+    }
     if (!selectedSupplierId) return
 
     const {
@@ -2050,84 +1993,81 @@ function openSupplierOrderForm() {
     }
   }
 
-function handleExportSupplierPDF() {
-  const supplier = suppliers.find((s) => s.id === selectedSupplierId);
-  if (!supplier) {
-    alert('Please select a supplier first.');
-    return;
-  }
+  function handleExportSupplierPDF() {
+    const supplier = suppliers.find((s) => s.id === selectedSupplierId);
+    if (!supplier) {
+      alert('Please select a supplier first.');
+      return;
+    }
 
-  const orders = supplierOrders
-    .filter((o) => o.supplierId === selectedSupplierId)
-    .sort((a, b) => a.date.localeCompare(b.date) || (a.id || 0) - (b.id || 0));
+    const orders = supplierOrders
+      .filter((o) => o.supplierId === selectedSupplierId)
+      .sort((a, b) => a.date.localeCompare(b.date) || (a.id || 0) - (b.id || 0));
 
-  const { totalCredit, totalDebit, balance } = getSupplierTotals(
-    supplier,
-    supplierOrders
-  );
+    const { totalCredit, totalDebit, balance } = getSupplierTotals(
+      supplier,
+      supplierOrders
+    );
 
-  const doc = new jsPDF('p', 'mm', 'a4');
-  const marginLeft = 10;
+    const doc = new jsPDF('p', 'mm', 'a4');
+    const marginLeft = 10;
 
-  doc.setFontSize(16);
-  doc.text('Supplier report', marginLeft, 14);
-  doc.setFontSize(9);
-  doc.text(`Date: ${pdfTodayLabel()}`, marginLeft, 20);
+    doc.setFontSize(16);
+    doc.text('Supplier report', marginLeft, 14);
+    doc.setFontSize(9);
+    doc.text(`Date: ${pdfTodayLabel()}`, marginLeft, 20);
 
-  doc.setFontSize(12);
-  doc.text(`Supplier: ${supplier.name || ''}`, marginLeft, 28);
-  doc.setFontSize(10);
-  doc.text(`Total credit: ${totalCredit.toFixed(2)}`, marginLeft, 34);
-  doc.text(`Total debit:  ${totalDebit.toFixed(2)}`, marginLeft, 40);
-  doc.text(`Balance:      ${balance.toFixed(2)}`, marginLeft, 46);
+    doc.setFontSize(12);
+    doc.text(`Supplier: ${supplier.name || ''}`, marginLeft, 28);
+    doc.setFontSize(10);
+    doc.text(`Total credit: ${totalCredit.toFixed(2)}`, marginLeft, 34);
+    doc.text(`Total debit:  ${totalDebit.toFixed(2)}`, marginLeft, 40);
+    doc.text(`Balance:      ${balance.toFixed(2)}`, marginLeft, 46);
 
-  // Table rows (NOTE intentionally not included in PDF)
-  let runningBalance = 0;
-  const rows = orders.map((o) => {
-    const debit = Number(o.amountDebit) || 0;
-    const credit = Number(o.amountCredit) || 0;
-    runningBalance += credit - debit;
-    return [
-      formatDisplayDate(o.date),
-      o.customerName || '',
-      o.product || '',
-      debit.toFixed(2),
-      credit.toFixed(2),
-      runningBalance.toFixed(2),
-    ]
-  })
-
-  if (!rows.length) {
-    doc.setFontSize(10)
-    doc.text('No orders yet.', marginLeft, 58)
-  } else {
-    drawGridTable(doc, {
-      startX: marginLeft,
-      startY: 54,
-      pageTopY: 18,
-      fontSize: 7.5,
-      headerFontSize: 7.5,
-      columns: [
-        { header: 'Date', width: 20 },
-        { header: 'Customer', width: 55 },
-        { header: 'Product', width: 50 },
-        { header: 'Debit', width: 20, align: 'right' },
-        { header: 'Credit', width: 20, align: 'right' },
-        { header: 'Balance', width: 25, align: 'right' },
-      ],
-      rows,
+    // Table rows (NOTE intentionally not included in PDF)
+    let runningBalance = 0;
+    const rows = orders.map((o) => {
+      const debit = Number(o.amountDebit) || 0;
+      const credit = Number(o.amountCredit) || 0;
+      runningBalance += credit - debit;
+      return [
+        formatDisplayDate(o.date),
+        o.customerName || '',
+        o.product || '',
+        debit.toFixed(2),
+        credit.toFixed(2),
+        runningBalance.toFixed(2),
+      ]
     })
+
+    if (!rows.length) {
+      doc.setFontSize(10)
+      doc.text('No orders yet.', marginLeft, 58)
+    } else {
+      drawGridTable(doc, {
+        startX: marginLeft,
+        startY: 54,
+        pageTopY: 18,
+        fontSize: 7.5,
+        headerFontSize: 7.5,
+        columns: [
+          { header: 'Date', width: 20 },
+          { header: 'Customer', width: 55 },
+          { header: 'Product', width: 50 },
+          { header: 'Debit', width: 20, align: 'right' },
+          { header: 'Credit', width: 20, align: 'right' },
+          { header: 'Balance', width: 25, align: 'right' },
+        ],
+        rows,
+      })
+    }
+
+    const safeName = (supplier.name || 'supplier')
+      .toString()
+      .replace(/[^a-z0-9_\-]+/gi, '_');
+
+    doc.save(`supplier-report-${safeName}.pdf`);
   }
-
-  const safeName = (supplier.name || 'supplier')
-    .toString()
-    .replace(/[^a-z0-9_\-]+/gi, '_');
-
-  doc.save(`supplier-report-${safeName}.pdf`);
-}
-
-
-
 
   // ---- sales CSV import helpers ----
   function parseCSV(text) {
@@ -2143,38 +2083,36 @@ function handleExportSupplierPDF() {
   }
 
   function parseDMYToISO(value) {
-  if (value === undefined || value === null) return ''
-  const trimmed = String(value).trim()
-  if (!trimmed) return ''
+    if (value === undefined || value === null) return ''
+    const trimmed = String(value).trim()
+    if (!trimmed) return ''
 
-  // Excel serial date support (e.g. 45238 -> days since 1899-12-30)
-  if (/^\d+(\.0+)?$/.test(trimmed)) {
-    const serial = parseInt(trimmed, 10)
-    if (!Number.isNaN(serial)) {
-      const base = new Date(Date.UTC(1899, 11, 30))
-      base.setUTCDate(base.getUTCDate() + serial)
-      const y = base.getUTCFullYear()
-      const m = String(base.getUTCMonth() + 1).padStart(2, '0')
-      const d = String(base.getUTCDate()).padStart(2, '0')
-      return `${y}-${m}-${d}`
+    // Excel serial date support (e.g. 45238 -> days since 1899-12-30)
+    if (/^\d+(\.0+)?$/.test(trimmed)) {
+      const serial = parseInt(trimmed, 10)
+      if (!Number.isNaN(serial)) {
+        const base = new Date(Date.UTC(1899, 11, 30))
+        base.setUTCDate(base.getUTCDate() + serial)
+        const y = base.getUTCFullYear()
+        const m = String(base.getUTCMonth() + 1).padStart(2, '0')
+        const d = String(base.getUTCDate()).padStart(2, '0')
+        return `${y}-${m}-${d}`
+      }
     }
+
+    const norm = trimmed.replace(/[-\/]/g, '.')
+    const parts = norm.split('.').map(p => p.trim()).filter(Boolean)
+    if (parts.length < 3) return ''
+    let [d, m, y] = parts
+    if (y.length === 2) {
+      y = Number(y) >= 70 ? '19' + y : '20' + y
+    }
+    if (d.length === 1) d = '0' + d
+    if (m.length === 1) m = '0' + m
+    if (!y || !m || !d) return ''
+    return `${y}-${m}-${d}`
   }
 
-  const norm = trimmed.replace(/[-\/]/g, '.')
-  const parts = norm.split('.').map(p => p.trim()).filter(Boolean)
-  if (parts.length < 3) return ''
-  let [d, m, y] = parts
-  if (y.length === 2) {
-    y = Number(y) >= 70 ? '19' + y : '20' + y
-  }
-  if (d.length === 1) d = '0' + d
-  if (m.length === 1) m = '0' + m
-  if (!y || !m || !d) return ''
-  return `${y}-${m}-${d}`
-}
-
-
-  
   function importSalesFromCSV(text) {
     const rows = parseCSV(text)
     if (!rows.length) {
@@ -2283,77 +2221,76 @@ function handleExportSupplierPDF() {
   }
 
   async function confirmSalesImport() {
-  // Wenn keine Preview vorhanden ist, abbrechen
-  if (!salesImportPreview || !salesImportPreview.rows?.length) return
+    // Wenn keine Preview vorhanden ist, abbrechen
+    if (!salesImportPreview || !salesImportPreview.rows?.length) return
 
-  const rows = salesImportPreview.rows
+    const rows = salesImportPreview.rows
 
-  // Lokale Zähler aus den globalen Countern
-  let invoiceCounter = nextInvoiceNumber
-  let customerCounter = nextCustomerNumber
+    // Lokale Zähler aus den globalen Countern
+    let invoiceCounter = nextInvoiceNumber
+    let customerCounter = nextCustomerNumber
 
-  // Für jede Zeile im Import NEUE Nummern vergeben
-  const payloads = rows.map((row) => {
-    const invoiceNo = `INV-${String(invoiceCounter).padStart(4, '0')}`
-    const customerNo = `C-${String(customerCounter).padStart(4, '0')}`
-    invoiceCounter += 1
-    customerCounter += 1
+    // Für jede Zeile im Import NEUE Nummern vergeben
+    const payloads = rows.map((row) => {
+      const invoiceNo = `INV-${String(invoiceCounter).padStart(4, '0')}`
+      const customerNo = `C-${String(customerCounter).padStart(4, '0')}`
+      invoiceCounter += 1
+      customerCounter += 1
 
-    return {
-      user_id: user.id,
-      invoice_no: invoiceNo,
-      customer_no: customerNo,
-      date: row.date,
-      customer_name: row.customerName,
-      product: row.product,
-      note: row.note || '',
-      total_amount: Number(row.total) || 0,
-      cash: Number(row.cash) || 0,
-      outstanding: Number(row.unpaid) || 0,
+      return {
+        user_id: user.id,
+        invoice_no: invoiceNo,
+        customer_no: customerNo,
+        date: row.date,
+        customer_name: row.customerName,
+        product: row.product,
+        note: row.note || '',
+        total_amount: Number(row.total) || 0,
+        cash: Number(row.cash) || 0,
+        outstanding: Number(row.unpaid) || 0,
+      }
+    })
+
+    try {
+      const { data, error } = await supabase
+        .from('sales')
+        .insert(payloads)
+        .select()
+
+      if (error) {
+        console.error('Fehler beim Import der Sales in Supabase', error)
+        alert('Fehler beim Import in die Datenbank. Details in der Konsole.')
+        return
+      }
+
+      const importedSales = data.map((row) => ({
+        id: row.id,
+        invoiceNo: row.invoice_no || '',
+        customerNo: row.customer_no || '',
+        date: row.date || '',
+        customerName: row.customer_name || '',
+        product: row.product || '',
+        note: row.note || '',
+        total: String(row.total_amount ?? ''),
+        cash: String(row.cash ?? ''),
+        unpaid: String(row.outstanding ?? ''),
+      }))
+
+      setSales((prev) => [...prev, ...importedSales])
+
+      // Counter um die Anzahl der importierten Zeilen erhöhen
+      const created = rows.length
+      const newNextInvoice = nextInvoiceNumber + created
+      const newNextCustomer = nextCustomerNumber + created
+      await updateCountersInSupabase(newNextInvoice, newNextCustomer)
+
+      // Preview schließen
+      setSalesImportPreview(null)
+    } catch (e) {
+      console.error('Unerwarteter Fehler beim Import der Sales', e)
+      alert('Unerwarteter Fehler beim Import. Details in der Konsole.')
     }
-  })
-
-  try {
-    const { data, error } = await supabase
-      .from('sales')
-      .insert(payloads)
-      .select()
-
-    if (error) {
-      console.error('Fehler beim Import der Sales in Supabase', error)
-      alert('Fehler beim Import in die Datenbank. Details in der Konsole.')
-      return
-    }
-
-    const importedSales = data.map((row) => ({
-      id: row.id,
-      invoiceNo: row.invoice_no || '',
-      customerNo: row.customer_no || '',
-      date: row.date || '',
-      customerName: row.customer_name || '',
-      product: row.product || '',
-      note: row.note || '',
-      total: String(row.total_amount ?? ''),
-      cash: String(row.cash ?? ''),
-      unpaid: String(row.outstanding ?? ''),
-    }))
-
-    setSales((prev) => [...prev, ...importedSales])
-
-    // Counter um die Anzahl der importierten Zeilen erhöhen
-    const created = rows.length
-    const newNextInvoice = nextInvoiceNumber + created
-    const newNextCustomer = nextCustomerNumber + created
-    await updateCountersInSupabase(newNextInvoice, newNextCustomer)
-
-    // Preview schließen
-    setSalesImportPreview(null)
-  } catch (e) {
-    console.error('Unerwarteter Fehler beim Import der Sales', e)
-    alert('Unerwarteter Fehler beim Import. Details in der Konsole.')
   }
-}
-
 
   function cancelSalesImport() {
     if (!salesImportPreview) return
@@ -2380,7 +2317,7 @@ function handleExportSupplierPDF() {
     reader.readAsText(file)
   }
 
-// summaries
+  // summaries
   const salesSummary = useMemo(() => {
     // apply the same filters as the sales list (search, date range, quick filters)
     let list = [...sales]
@@ -2490,7 +2427,6 @@ function handleExportSupplierPDF() {
     }
   }, [refunds, refundSearch, refundDateFrom, refundDateTo, refundFilterMode])
 
-
   const expenseSummary = useMemo(() => {
     // apply same filters as the expense list
     let list = [...expenses]
@@ -2543,8 +2479,6 @@ function handleExportSupplierPDF() {
       total: formatMoney(total),
     }
   }, [expenses, expenseFilterMode, expenseFilterFrom, expenseFilterTo, expenseSearch])
-
-
 
   const profitValue = useMemo(() => {
     // total sales amount
@@ -2622,7 +2556,6 @@ function handleExportSupplierPDF() {
     const profit = totalSalesAmount - totalRefundsAll - supplierBalance - totalExpenses
     return formatMoney(profit)
   }, [sales, refunds, supplierOrders, expenses, dashboardRange.from, dashboardRange.to])
-
 
   const netSalesValue = useMemo(() => {
     const totalSales = Number(salesSummary.totalAmount) || 0
@@ -2718,7 +2651,6 @@ function handleExportSupplierPDF() {
     return rows.filter((r) => !!r.date)
   }, [sales, refunds, supplierOrders, suppliers, expenses])
 
-  
   // Global cash ledger totals for dashboard (ignore cash ledger filters)
   const cashLedgerTotalsAll = useMemo(() => {
     let rows = [...cashLedgerBaseRows]
@@ -2782,7 +2714,7 @@ function handleExportSupplierPDF() {
     }
   }, [cashLedgerBaseRows, cashOpeningBalance, dashboardRange.to])
 
-const cashLedgerComputed = useMemo(() => {
+  const cashLedgerComputed = useMemo(() => {
     let rows = [...cashLedgerBaseRows]
 
     // Quick date filters
@@ -2851,6 +2783,7 @@ const cashLedgerComputed = useMemo(() => {
     cashLedgerSearch,
     cashOpeningBalance,
   ])
+
   // filters
   const filteredSales = useMemo(() => {
     let list = [...sales]
@@ -2883,7 +2816,7 @@ const cashLedgerComputed = useMemo(() => {
     })
 
     // required sort: unpaid > 0 first, then overpaid, then Nil
-     list.sort((a, b) => {
+    list.sort((a, b) => {
       const ua = Number(a.unpaid) || 0
       const ub = Number(b.unpaid) || 0
 
@@ -2960,8 +2893,6 @@ const cashLedgerComputed = useMemo(() => {
 
     return list
   }, [refunds, refundSearch, refundDateFrom, refundDateTo, refundFilterMode])
-
-
 
   // Customers receivable (open customer balances) based on current sales filters
   const receivableInvoices = useMemo(
@@ -3229,7 +3160,7 @@ const cashLedgerComputed = useMemo(() => {
     doc.save('customers_payable.pdf')
   }
 
-    const refundInvoiceOptions = useMemo(
+  const refundInvoiceOptions = useMemo(
     () => sales.map((s) => ({ value: s.invoiceNo, label: `${s.invoiceNo} – ${s.customerName}` })),
     [sales],
   )
@@ -3251,7 +3182,6 @@ const cashLedgerComputed = useMemo(() => {
   )
 
   // header meta
-  
   const supplierSummary = useMemo(() => {
     const totalSuppliers = suppliers.length
     let totalCredit = 0
@@ -3414,8 +3344,7 @@ const cashLedgerComputed = useMemo(() => {
     return list.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
   }, [expenses, expenseFilterMode, expenseFilterFrom, expenseFilterTo, expenseSearch])
 
-
-const headerMeta =
+  const headerMeta =
     activeView === 'dashboard'
       ? {
           icon: 'fa-grid-2',
@@ -3452,50 +3381,50 @@ const headerMeta =
           title: 'Expenses',
           subtitle: 'Track and review outgoing cash expenses.',
         }
-: activeView === 'cashLedger'
-? {
-    icon: 'fa-sack-dollar',
-    title: 'Cash ledger',
-    subtitle: 'Cash movements from sales, refunds, expenses and suppliers.',
-  }
-: activeView === 'suppliers'
-? {
-    icon: 'fa-truck',
-    title: 'Suppliers',
-    subtitle: 'Manage supplier balances and orders.',
-  }
+      : activeView === 'cashLedger'
+      ? {
+          icon: 'fa-sack-dollar',
+          title: 'Cash ledger',
+          subtitle: 'Cash movements from sales, refunds, expenses and suppliers.',
+        }
+      : activeView === 'suppliers'
+      ? {
+          icon: 'fa-truck',
+          title: 'Suppliers',
+          subtitle: 'Manage supplier balances and orders.',
+        }
       : {
           icon: 'fa-truck',
           title: 'Supplier details',
           subtitle: 'Orders and balance for the selected supplier.',
         }
 
-const effectiveHeaderMeta =
-  activeView === 'profile'
-    ? {
-        icon: 'fa-user-gear',
-        title: 'Profile & settings',
-        subtitle: 'Manage program name, business details and logo.',
-      }
-    : headerMeta
+  const effectiveHeaderMeta =
+    activeView === 'profile'
+      ? {
+          icon: 'fa-user-gear',
+          title: 'Profile & settings',
+          subtitle: 'Manage program name, business details and logo.',
+        }
+      : headerMeta
 
-function formatSecondsToMMSS(totalSeconds) {
-  const s = Math.max(0, totalSeconds || 0)
-  const minutes = Math.floor(s / 60)
-  const seconds = s % 60
-  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-}
+  function formatSecondsToMMSS(totalSeconds) {
+    const s = Math.max(0, totalSeconds || 0)
+    const minutes = Math.floor(s / 60)
+    const seconds = s % 60
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+  }
 
-if (authInitializing) {
-  return null
-}
+  if (authInitializing) {
+    return null
+  }
 
 
-if (!user) {
-  return <AuthScreen onAuthSuccess={handleAuthSuccess} />
-}
+  if (!user) {
+    return <AuthScreen onAuthSuccess={handleAuthSuccess} />
+  }
 
-return (
+  return (
     <div className={`app-shell ${isSidebarOpen ? 'sidebar-open' : ''}`}>
       {/* SIDEBAR LEFT */}
       <aside className="sidebar">
@@ -3520,113 +3449,113 @@ return (
           </button>
         </nav>
 
-<div className="sidebar-section-label">Sales</div>
-<nav className="sidebar-nav">
-  <button
-    className={`sidebar-item ${activeView === 'sales' ? 'active' : ''}`}
-    onClick={goSalesOverview}
-  >
-    <i className="fa-solid fa-receipt" />
-    <span>Sales overview</span>
-  </button>
-</nav>
+        <div className="sidebar-section-label">Sales</div>
+        <nav className="sidebar-nav">
+          <button
+            className={`sidebar-item ${activeView === 'sales' ? 'active' : ''}`}
+            onClick={goSalesOverview}
+          >
+            <i className="fa-solid fa-receipt" />
+            <span>Sales overview</span>
+          </button>
+        </nav>
 
-<div className="sidebar-section-label">Returns</div>
-<nav className="sidebar-nav">
-  <button
-    className={`sidebar-item ${activeView === 'returns' ? 'active' : ''}`}
-    onClick={goReturnsOverview}
-  >
-    <i className="fa-solid fa-rotate-left" />
-    <span>Returns overview</span>
-  </button>
-</nav>
+        <div className="sidebar-section-label">Returns</div>
+        <nav className="sidebar-nav">
+          <button
+            className={`sidebar-item ${activeView === 'returns' ? 'active' : ''}`}
+            onClick={goReturnsOverview}
+          >
+            <i className="fa-solid fa-rotate-left" />
+            <span>Returns overview</span>
+          </button>
+        </nav>
 
-<div className="sidebar-section-label">Customers</div>
-<nav className="sidebar-nav">
-  <button
-    className={`sidebar-item ${activeView === 'customersReceivable' ? 'active' : ''}`}
-    onClick={() => {
-    setActiveView('customersReceivable')
-    setIsSidebarOpen(false)
-  }}
-  >
-    <i className="fa-solid fa-user-check" />
-    <span>Customers receivable</span>
-  </button>
-  <button
-    className={`sidebar-item ${activeView === 'customersPayable' ? 'active' : ''}`}
-    onClick={() => {
-    setActiveView('customersPayable')
-    setIsSidebarOpen(false)
-  }}
-  >
-    <i className="fa-solid fa-user-minus" />
-    <span>Customers payable</span>
-  </button>
-</nav>
+        <div className="sidebar-section-label">Customers</div>
+        <nav className="sidebar-nav">
+          <button
+            className={`sidebar-item ${activeView === 'customersReceivable' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveView('customersReceivable')
+              setIsSidebarOpen(false)
+            }}
+          >
+            <i className="fa-solid fa-user-check" />
+            <span>Customers receivable</span>
+          </button>
+          <button
+            className={`sidebar-item ${activeView === 'customersPayable' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveView('customersPayable')
+              setIsSidebarOpen(false)
+            }}
+          >
+            <i className="fa-solid fa-user-minus" />
+            <span>Customers payable</span>
+          </button>
+        </nav>
 
-<div className="sidebar-section-label">Expenses</div>
-<nav className="sidebar-nav">
-  <button
-    className={`sidebar-item ${activeView === 'expenses' ? 'active' : ''}`}
-    onClick={() => {
-    setActiveView('expenses')
-    setIsSidebarOpen(false)
-  }}
-  >
-    <i className="fa-solid fa-wallet" />
-    <span>Expenses</span>
-  </button>
-</nav>
+        <div className="sidebar-section-label">Expenses</div>
+        <nav className="sidebar-nav">
+          <button
+            className={`sidebar-item ${activeView === 'expenses' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveView('expenses')
+              setIsSidebarOpen(false)
+            }}
+          >
+            <i className="fa-solid fa-wallet" />
+            <span>Expenses</span>
+          </button>
+        </nav>
 
-<div className="sidebar-section-label">Cash</div>
-<nav className="sidebar-nav">
-  <button
-    className={`sidebar-item ${activeView === 'cashLedger' ? 'active' : ''}`}
-    onClick={() => {
-    setActiveView('cashLedger')
-    setIsSidebarOpen(false)
-  }}
-  >
-    <i className="fa-solid fa-sack-dollar" />
-    <span>Cash ledger</span>
-  </button>
-</nav>
+        <div className="sidebar-section-label">Cash</div>
+        <nav className="sidebar-nav">
+          <button
+            className={`sidebar-item ${activeView === 'cashLedger' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveView('cashLedger')
+              setIsSidebarOpen(false)
+            }}
+          >
+            <i className="fa-solid fa-sack-dollar" />
+            <span>Cash ledger</span>
+          </button>
+        </nav>
 
 
-<div className="sidebar-section-label">Suppliers</div>
-<nav className="sidebar-nav">
-  <button
-    className={`sidebar-item ${
-      activeView === 'suppliers' || activeView === 'supplierDetail' ? 'active' : ''
-    }`}
-    onClick={goSuppliersOverview}
-  >
-    <i className="fa-solid fa-truck" />
-    <span>Suppliers</span>
-  </button>
-</nav>
+        <div className="sidebar-section-label">Suppliers</div>
+        <nav className="sidebar-nav">
+          <button
+            className={`sidebar-item ${
+              activeView === 'suppliers' || activeView === 'supplierDetail' ? 'active' : ''
+            }`}
+            onClick={goSuppliersOverview}
+          >
+            <i className="fa-solid fa-truck" />
+            <span>Suppliers</span>
+          </button>
+        </nav>
 
-<div className="sidebar-section-label">Account</div>
-<nav className="sidebar-nav">
-  <button
-    className={`sidebar-item ${activeView === 'profile' ? 'active' : ''}`}
-    onClick={() => {
-    setActiveView('profile')
-    setIsSidebarOpen(false)
-  }}
-  >
-    <i className="fa-solid fa-user" />
-    <span>Profile</span>
-  </button>
-  <button className="sidebar-item" onClick={handleLogout}>
-    <i className="fa-solid fa-right-from-bracket" />
-    <span>Log out</span>
-  </button>
-</nav>
+        <div className="sidebar-section-label">Account</div>
+        <nav className="sidebar-nav">
+          <button
+            className={`sidebar-item ${activeView === 'profile' ? 'active' : ''}`}
+            onClick={() => {
+              setActiveView('profile')
+              setIsSidebarOpen(false)
+            }}
+          >
+            <i className="fa-solid fa-user" />
+            <span>Profile</span>
+          </button>
+          <button className="sidebar-item" onClick={handleLogout}>
+            <i className="fa-solid fa-right-from-bracket" />
+            <span>Log out</span>
+          </button>
+        </nav>
 
-    <div className="sidebar-section-label">Future modules</div>
+        <div className="sidebar-section-label">Future modules</div>
         <nav className="sidebar-nav">
           <button className="sidebar-item" disabled>
             <i className="fa-regular fa-circle-dot" />
@@ -3644,340 +3573,337 @@ return (
       />
 
       {/* MAIN CONTENT RIGHT */}
-<div className="main-area">
-  <header className="page-header">
-    {/* Mobile sidebar toggle */}
-    <button
-      type="button"
-      className="sidebar-toggle"
-      onClick={() => setIsSidebarOpen((prev) => !prev)}
-    >
-      <i className="fa-solid fa-bars" />
-    </button>
+      <div className="main-area">
+        <header className="page-header">
+          {/* Mobile sidebar toggle */}
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setIsSidebarOpen((prev) => !prev)}
+          >
+            <i className="fa-solid fa-bars" />
+          </button>
 
-    {/* Titel & Untertitel */}
-    <div className="page-header-main">
-      <h1>
-        <i className={`fa-solid ${effectiveHeaderMeta.icon}`} /> {effectiveHeaderMeta.title}
-      </h1>
-      <p>{effectiveHeaderMeta.subtitle}</p>
-    </div>
-
-    {/* Sichtbarer Session-Timer */}
-    {user && (
-      <div
-        className="session-timer"
-        style={{
-          marginLeft: 'auto',
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '6px',
-          padding: '4px 10px',
-          borderRadius: '999px',
-          border: '1px solid #e5e7eb',
-          fontSize: '0.85rem',
-          fontWeight: 500,
-          backgroundColor: '#f9fafb',
-        }}
-      >
-        <i className="fa-solid fa-clock" />
-        <span>Session</span>
-        <span
-          style={{
-            fontVariantNumeric: 'tabular-nums',
-            fontWeight: 'bold',
-            color: secondsLeft <= 60 ? '#b91c1c' : '#111827',
-          }}
-        >
-          {formatSecondsToMMSS(secondsLeft)}
-        </span>
-      </div>
-    )}
-  </header>
-
-  <main className="app-main">
-
-    {showExpenseForm && (
-      <section className="view">
-        <div className="card form-card">
-          <div className="card-header">
-            <h3>
-              <i className="fa-solid fa-wallet" /> New expense
-            </h3>
+          {/* Titel & Untertitel */}
+          <div className="page-header-main">
+            <h1>
+              <i className={`fa-solid ${effectiveHeaderMeta.icon}`} /> {effectiveHeaderMeta.title}
+            </h1>
+            <p>{effectiveHeaderMeta.subtitle}</p>
           </div>
-          <div className="card-body">
-            <form onSubmit={handleExpenseSubmit}>
-              <div className="form-row">
-                <div className="form-field">
-                  <label>Date</label>
-                  <div className="input-with-icon">
-                    <i className="fa-solid fa-calendar-day" />
-                    <input
-                      type="date"
-                      value={expenseForm.date}
-                      onChange={(e) =>
-                        setExpenseForm((prev) => ({ ...prev, date: e.target.value }))
-                      }
-                      required
-                    />
-                  </div>
+
+          {/* Sichtbarer Session-Timer */}
+          {user && (
+            <div
+              className="session-timer"
+              style={{
+                marginLeft: 'auto',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '4px 10px',
+                borderRadius: '999px',
+                border: '1px solid #e5e7eb',
+                fontSize: '0.85rem',
+                fontWeight: 500,
+                backgroundColor: '#f9fafb',
+              }}
+            >
+              <i className="fa-solid fa-clock" />
+              <span>Session</span>
+              <span
+                style={{
+                  fontVariantNumeric: 'tabular-nums',
+                  fontWeight: 'bold',
+                  color: secondsLeft <= 60 ? '#b91c1c' : '#111827',
+                }}
+              >
+                {formatSecondsToMMSS(secondsLeft)}
+              </span>
+            </div>
+          )}
+        </header>
+
+        <main className="app-main">
+
+          {showExpenseForm && (
+            <section className="view">
+              <div className="card form-card">
+                <div className="card-header">
+                  <h3>
+                    <i className="fa-solid fa-wallet" /> New expense
+                  </h3>
                 </div>
-                <div className="form-field">
-                  <label>Description</label>
-                  <div className="input-with-icon">
-                    <i className="fa-solid fa-file-lines" />
-                    <input
-                      type="text"
-                      value={expenseForm.description}
-                      onChange={(e) =>
-                        setExpenseForm((prev) => ({...prev,description: e.target.value, }))
-                      }
-                      required
-                    />
-                  </div>
+                <div className="card-body">
+                  <form onSubmit={handleExpenseSubmit}>
+                    <div className="form-row">
+                      <div className="form-field">
+                        <label>Date</label>
+                        <div className="input-with-icon">
+                          <i className="fa-solid fa-calendar-day" />
+                          <input
+                            type="date"
+                            value={expenseForm.date}
+                            onChange={(e) =>
+                              setExpenseForm((prev) => ({ ...prev, date: e.target.value }))
+                            }
+                            required
+                          />
+                        </div>
+                      </div>
+                      <div className="form-field">
+                        <label>Description</label>
+                        <div className="input-with-icon">
+                          <i className="fa-solid fa-file-lines" />
+                          <input
+                            type="text"
+                            value={expenseForm.description}
+                            onChange={(e) =>
+                              setExpenseForm((prev) => ({...prev,description: e.target.value, }))
+                            }
+                            required
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="form-row">
+                      <div className="form-field">
+                        <label>Note</label>
+                        <div className="input-with-icon">
+                          <i className="fa-solid fa-note-sticky" />
+                          <input
+                            type="text"
+                            value={expenseForm.note}
+                            onChange={(e) =>
+                              setExpenseForm((prev) => ({ ...prev, note: e.target.value }))
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="form-field">
+                        <label>Cash</label>
+                        <div className="input-with-icon">
+                          <i className="fa-solid fa-sack-dollar" />
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={expenseForm.cash}
+                            onChange={(e) =>
+                              setExpenseForm((prev) => ({ ...prev, cash: e.target.value }))
+                            }
+                            required
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="form-actions">
+                      <button type="submit" className="btn-primary">
+                        <i className="fa-solid fa-floppy-disk" />
+                        <span>Save</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={() => setShowExpenseForm(false)}
+                      >
+                        <i className="fa-solid fa-xmark" />
+                        <span>Close</span>
+                      </button>
+                    </div>
+                  </form>
                 </div>
               </div>
+            </section>
+          )}
 
-              <div className="form-row">
-                <div className="form-field">
-                  <label>Note</label>
-                  <div className="input-with-icon">
-                    <i className="fa-solid fa-note-sticky" />
-                    <input
-                      type="text"
-                      value={expenseForm.note}
-                      onChange={(e) =>
-                        setExpenseForm((prev) => ({ ...prev, note: e.target.value }))
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="form-field">
-                  <label>Cash</label>
-                  <div className="input-with-icon">
-                    <i className="fa-solid fa-sack-dollar" />
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={expenseForm.cash}
-                      onChange={(e) =>
-                        setExpenseForm((prev) => ({ ...prev, cash: e.target.value }))
-                      }
-                      required
-                    />
-                  </div>
-                </div>
-              </div>
+          {/* DASHBOARD VIEW */}
+          {activeView === 'dashboard' && (
+            <DashboardPage
+              cashLedgerTotalsAll={dashboardFilterMode === 'all' ? cashLedgerTotalsAll : cashLedgerTotalsDashboard}
+              dashboardReceivableTotal={dashboardFilterMode === 'all' ? dashboardReceivableTotal : dashboardReceivableTotalFiltered}
+              dashboardCustomerPayablesTotal={dashboardFilterMode === 'all' ? dashboardCustomerPayablesTotal : dashboardCustomerPayablesTotalFiltered}
+              profitValue={dashboardFilterMode === 'all' ? profitValue : profitValueFiltered}
+              supplierSummary={dashboardFilterMode === 'all' ? supplierSummary : supplierSummaryDashboard}
 
-              <div className="form-actions">
-                <button type="submit" className="btn-primary">
-                  <i className="fa-solid fa-floppy-disk" />
-                  <span>Save</span>
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={() => setShowExpenseForm(false)}
-                >
-                  <i className="fa-solid fa-xmark" />
-                  <span>Close</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      </section>
-    )}
-
-    {/* DASHBOARD VIEW */}
-    {activeView === 'dashboard' && (
-      <DashboardPage
-        cashLedgerTotalsAll={dashboardFilterMode === 'all' ? cashLedgerTotalsAll : cashLedgerTotalsDashboard}
-        dashboardReceivableTotal={dashboardFilterMode === 'all' ? dashboardReceivableTotal : dashboardReceivableTotalFiltered}
-        dashboardCustomerPayablesTotal={dashboardFilterMode === 'all' ? dashboardCustomerPayablesTotal : dashboardCustomerPayablesTotalFiltered}
-        profitValue={dashboardFilterMode === 'all' ? profitValue : profitValueFiltered}
-        supplierSummary={dashboardFilterMode === 'all' ? supplierSummary : supplierSummaryDashboard}
-
-        dashboardFilterMode={dashboardFilterMode}
-        setDashboardFilterMode={setDashboardFilterMode}
-        dashboardYear={dashboardYear}
-        setDashboardYear={setDashboardYear}
-        dashboardMonth={dashboardMonth}
-        setDashboardMonth={setDashboardMonth}
-        dashboardRangeLabel={dashboardRange.label}
-      />
-    )}
- 
-
+              dashboardFilterMode={dashboardFilterMode}
+              setDashboardFilterMode={setDashboardFilterMode}
+              dashboardYear={dashboardYear}
+              setDashboardYear={setDashboardYear}
+              dashboardMonth={dashboardMonth}
+              setDashboardMonth={setDashboardMonth}
+              dashboardRangeLabel={dashboardRange.label}
+            />
+          )}
 
           {/* EXPENSES VIEW */}
           {activeView === 'expenses' && (
-  <ExpensesPage
-    expenses={expenses}
-    filteredExpenses={filteredExpenses}
-    expenseSummary={expenseSummary}
-    expenseSearch={expenseSearch}
-    setExpenseSearch={setExpenseSearch}
-    expenseFilterMode={expenseFilterMode}
-    setExpenseFilterMode={setExpenseFilterMode}
-    expenseFilterFrom={expenseFilterFrom}
-    setExpenseFilterFrom={setExpenseFilterFrom}
-    expenseFilterTo={expenseFilterTo}
-    setExpenseFilterTo={setExpenseFilterTo}
-    showExpenseForm={showExpenseForm}
-    setShowExpenseForm={setShowExpenseForm}
-    setExpenseForm={setExpenseForm}
-    openEditExpense={openEditExpense}
-    deleteExpense={deleteExpense}
-    openHistory={openHistory}
-  />
-)}
+            <ExpensesPage
+              expenses={expenses}
+              filteredExpenses={filteredExpenses}
+              expenseSummary={expenseSummary}
+              expenseSearch={expenseSearch}
+              setExpenseSearch={setExpenseSearch}
+              expenseFilterMode={expenseFilterMode}
+              setExpenseFilterMode={setExpenseFilterMode}
+              expenseFilterFrom={expenseFilterFrom}
+              setExpenseFilterFrom={setExpenseFilterFrom}
+              expenseFilterTo={expenseFilterTo}
+              setExpenseFilterTo={setExpenseFilterTo}
+              showExpenseForm={showExpenseForm}
+              setShowExpenseForm={setShowExpenseForm}
+              setExpenseForm={setExpenseForm}
+              openEditExpense={openEditExpense}
+              deleteExpense={deleteExpense}
+              openHistory={openHistory}
+            />
+          )}
 
           {/* CASH LEDGER VIEW */}
           {activeView === 'cashLedger' && (
-  <CashLedgerPage
-    cashLedgerComputed={cashLedgerComputed}
-    cashLedgerSearch={cashLedgerSearch}
-    setCashLedgerSearch={setCashLedgerSearch}
-    cashLedgerFilterMode={cashLedgerFilterMode}
-    setCashLedgerFilterMode={setCashLedgerFilterMode}
-    cashLedgerDateFrom={cashLedgerDateFrom}
-    setCashLedgerDateFrom={setCashLedgerDateFrom}
-    cashLedgerDateTo={cashLedgerDateTo}
-    setCashLedgerDateTo={setCashLedgerDateTo}
-    cashOpeningBalance={cashOpeningBalance}
-    setCashOpeningBalance={setCashOpeningBalance}
-  />
-)}
-{/* SALES VIEW */}
-          {activeView === 'sales' && (
-  <SalesPage
-    sales={sales}
-    filteredSales={filteredSales}
-    salesForm={salesForm}
-    setSalesForm={setSalesForm}
-    salesSearch={salesSearch}
-    setSalesSearch={setSalesSearch}
-    salesDateFrom={salesDateFrom}
-    setSalesDateFrom={setSalesDateFrom}
-    salesDateTo={salesDateTo}
-    setSalesDateTo={setSalesDateTo}
-    salesFilterMode={salesFilterMode}
-    setSalesFilterMode={setSalesFilterMode}
-    showSalesForm={showSalesForm}
-    editingSale={editingSale}
-    closeSalesForm={closeSalesForm}
-    openEditSalesForm={openEditSalesForm}
-    goSalesNew={goSalesNew}
-    goSalesImport={goSalesImport}
-    showSalesImport={showSalesImport}
-    salesImportPreview={salesImportPreview}
-    handleSalesFileSelected={handleSalesFileSelected}
-    handleSalesImportClick={handleSalesImportClick}
-    salesFileInputRef={salesFileInputRef}
-    confirmSalesImport={confirmSalesImport}
-    cancelSalesImport={cancelSalesImport}
-    handleSalesSubmit={handleSalesSubmit}
-    deleteSale={deleteSale}
-    recalcSalesUnpaid={recalcSalesUnpaid}
-    openHistory={openHistory}
-    salesSummary={salesSummary}
-  />
-)}
+            <CashLedgerPage
+              cashLedgerComputed={cashLedgerComputed}
+              cashLedgerSearch={cashLedgerSearch}
+              setCashLedgerSearch={setCashLedgerSearch}
+              cashLedgerFilterMode={cashLedgerFilterMode}
+              setCashLedgerFilterMode={setCashLedgerFilterMode}
+              cashLedgerDateFrom={cashLedgerDateFrom}
+              setCashLedgerDateFrom={setCashLedgerDateFrom}
+              cashLedgerDateTo={cashLedgerDateTo}
+              setCashLedgerDateTo={setCashLedgerDateTo}
+              cashOpeningBalance={cashOpeningBalance}
+              setCashOpeningBalance={setCashOpeningBalance}
+            />
+          )}
 
+          {/* SALES VIEW */}
+          {activeView === 'sales' && (
+            <SalesPage
+              sales={sales}
+              filteredSales={filteredSales}
+              salesForm={salesForm}
+              setSalesForm={setSalesForm}
+              salesSearch={salesSearch}
+              setSalesSearch={setSalesSearch}
+              salesDateFrom={salesDateFrom}
+              setSalesDateFrom={setSalesDateFrom}
+              salesDateTo={salesDateTo}
+              setSalesDateTo={setSalesDateTo}
+              salesFilterMode={salesFilterMode}
+              setSalesFilterMode={setSalesFilterMode}
+              showSalesForm={showSalesForm}
+              editingSale={editingSale}
+              closeSalesForm={closeSalesForm}
+              openEditSalesForm={openEditSalesForm}
+              goSalesNew={goSalesNew}
+              goSalesImport={goSalesImport}
+              showSalesImport={showSalesImport}
+              salesImportPreview={salesImportPreview}
+              handleSalesFileSelected={handleSalesFileSelected}
+              handleSalesImportClick={handleSalesImportClick}
+              salesFileInputRef={salesFileInputRef}
+              confirmSalesImport={confirmSalesImport}
+              cancelSalesImport={cancelSalesImport}
+              handleSalesSubmit={handleSalesSubmit}
+              deleteSale={deleteSale}
+              recalcSalesUnpaid={recalcSalesUnpaid}
+              openHistory={openHistory}
+              salesSummary={salesSummary}
+            />
+          )}
 
           {/* CUSTOMERS RECEIVABLE VIEW (read-only) */}
           {activeView === 'customersReceivable' && (
-  <CustomersReceivablePage
-    receivableSummary={receivableSummary}
-    receivableInvoices={receivableInvoices}
-    salesSearch={salesSearch}
-    setSalesSearch={setSalesSearch}
-    salesFilterMode={salesFilterMode}
-    setSalesFilterMode={setSalesFilterMode}
-    salesDateFrom={salesDateFrom}
-    setSalesDateFrom={setSalesDateFrom}
-    salesDateTo={salesDateTo}
-    setSalesDateTo={setSalesDateTo}
-    exportReceivablesPdf={exportReceivablesPdf}
-  />
-)}
-
+            <CustomersReceivablePage
+              receivableSummary={receivableSummary}
+              receivableInvoices={receivableInvoices}
+              salesSearch={salesSearch}
+              setSalesSearch={setSalesSearch}
+              salesFilterMode={salesFilterMode}
+              setSalesFilterMode={setSalesFilterMode}
+              salesDateFrom={salesDateFrom}
+              setSalesDateFrom={setSalesDateFrom}
+              salesDateTo={salesDateTo}
+              setSalesDateTo={setSalesDateTo}
+              exportReceivablesPdf={exportReceivablesPdf}
+            />
+          )}
 
           {/* CUSTOMERS PAYABLE VIEW (read-only) */}
           {activeView === 'customersPayable' && (
-  <CustomersPayablePage
-    customerPayablesSummary={customerPayablesSummary}
-    payableRefunds={payableRefunds}
-    refundSearch={refundSearch}
-    setRefundSearch={setRefundSearch}
-    refundFilterMode={refundFilterMode}
-    setRefundFilterMode={setRefundFilterMode}
-    refundDateFrom={refundDateFrom}
-    setRefundDateFrom={setRefundDateFrom}
-    refundDateTo={refundDateTo}
-    setRefundDateTo={setRefundDateTo}
-    exportCustomerPayablesPdf={exportCustomerPayablesPdf}
-  />
-)}
+            <CustomersPayablePage
+              customerPayablesSummary={customerPayablesSummary}
+              payableRefunds={payableRefunds}
+              refundSearch={refundSearch}
+              setRefundSearch={setRefundSearch}
+              refundFilterMode={refundFilterMode}
+              setRefundFilterMode={setRefundFilterMode}
+              refundDateFrom={refundDateFrom}
+              setRefundDateFrom={setRefundDateFrom}
+              refundDateTo={refundDateTo}
+              setRefundDateTo={setRefundDateTo}
+              exportCustomerPayablesPdf={exportCustomerPayablesPdf}
+            />
+          )}
 
           {/* RETURNS VIEW */}
           {activeView === 'returns' && (
-  <ReturnsPage
-    refunds={refunds}
-    filteredRefunds={filteredRefunds}
-    refundSummary={refundSummary}
-    refundSearch={refundSearch}
-    setRefundSearch={setRefundSearch}
-    refundDateFrom={refundDateFrom}
-    setRefundDateFrom={setRefundDateFrom}
-    refundDateTo={refundDateTo}
-    setRefundDateTo={setRefundDateTo}
-    refundFilterMode={refundFilterMode}
-    setRefundFilterMode={setRefundFilterMode}
-    showRefundForm={showRefundForm}
-    closeRefundForm={closeRefundForm}
-    goReturnsNew={goReturnsNew}
-    refundForm={refundForm}
-    setRefundForm={setRefundForm}
-    editingRefund={editingRefund}
-    refundInvoiceOptions={refundInvoiceOptions}
-    handleRefundInvoiceChange={handleRefundInvoiceChange}
-    handleRefundSubmit={handleRefundSubmit}
-    recalcRefundUnpaid={recalcRefundUnpaid}
-    openEditRefundForm={openEditRefundForm}
-    deleteRefund={deleteRefund}
-    openHistory={openHistory}
-  />
-)}
+            <ReturnsPage
+              refunds={refunds}
+              filteredRefunds={filteredRefunds}
+              refundSummary={refundSummary}
+              refundSearch={refundSearch}
+              setRefundSearch={setRefundSearch}
+              refundDateFrom={refundDateFrom}
+              setRefundDateFrom={setRefundDateFrom}
+              refundDateTo={refundDateTo}
+              setRefundDateTo={setRefundDateTo}
+              refundFilterMode={refundFilterMode}
+              setRefundFilterMode={setRefundFilterMode}
+              showRefundForm={showRefundForm}
+              closeRefundForm={closeRefundForm}
+              goReturnsNew={goReturnsNew}
+              refundForm={refundForm}
+              setRefundForm={setRefundForm}
+              editingRefund={editingRefund}
+              refundInvoiceOptions={refundInvoiceOptions}
+              handleRefundInvoiceChange={handleRefundInvoiceChange}
+              handleRefundSubmit={handleRefundSubmit}
+              recalcRefundUnpaid={recalcRefundUnpaid}
+              openEditRefundForm={openEditRefundForm}
+              deleteRefund={deleteRefund}
+              openHistory={openHistory}
+            />
+          )}
 
           {/* SUPPLIERS VIEW */}
           {activeView === 'suppliers' && (
-  <SuppliersPage
-    suppliers={suppliers}
-    supplierOrders={supplierOrders}
-    supplierSummary={supplierSummary}
-    supplierSearch={supplierSearch}
-    setSupplierSearch={setSupplierSearch}
-    supplierFilterMode={supplierFilterMode}
-    setSupplierFilterMode={setSupplierFilterMode}
-    filteredSuppliers={filteredSuppliers}
-    showSupplierForm={showSupplierForm}
-    setShowSupplierForm={setShowSupplierForm}
-    supplierForm={supplierForm}
-    setSupplierForm={setSupplierForm}
-    editingSupplier={editingSupplier}
-    setEditingSupplier={setEditingSupplier}
-    handleSupplierSubmit={handleSupplierSubmit}
-    closeSupplierForm={closeSupplierForm}
-    openSupplierDetail={openSupplierDetail}
-    openEditSupplierForm={openEditSupplierForm}
-    deleteSupplier={deleteSupplier}
-    getSupplierTotals={getSupplierTotals}
-    openHistory={openHistory}
-  />
-)}
+            <SuppliersPage
+              suppliers={suppliers}
+              supplierOrders={supplierOrders}
+              supplierSummary={supplierSummary}
+              supplierSearch={supplierSearch}
+              setSupplierSearch={setSupplierSearch}
+              supplierFilterMode={supplierFilterMode}
+              setSupplierFilterMode={setSupplierFilterMode}
+              filteredSuppliers={filteredSuppliers}
+              showSupplierForm={showSupplierForm}
+              setShowSupplierForm={setShowSupplierForm}
+              supplierForm={supplierForm}
+              setSupplierForm={setSupplierForm}
+              editingSupplier={editingSupplier}
+              setEditingSupplier={setEditingSupplier}
+              handleSupplierSubmit={handleSupplierSubmit}
+              closeSupplierForm={closeSupplierForm}
+              openSupplierDetail={openSupplierDetail}
+              openEditSupplierForm={openEditSupplierForm}
+              deleteSupplier={deleteSupplier}
+              getSupplierTotals={getSupplierTotals}
+              openHistory={openHistory}
+            />
+          )}
 
           {/* SUPPLIER DETAIL VIEW */}
           {activeView === 'supplierDetail' && (
