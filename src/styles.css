@@ -461,7 +461,6 @@ body {
 }
 
 .table-wrapper {
-  max-height: 420px;
   overflow: auto;
   border-radius: 0 0 var(--radius-xl) var(--radius-xl);
 }
