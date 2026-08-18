@@ -3252,15 +3252,17 @@ function App() {
     return list
   }, [suppliers, supplierOrders, supplierSearch, supplierFilterMode])
 
-  const supplierOrdersForSelected = useMemo(() => {
+ const supplierOrdersForSelected = useMemo(() => {
     if (!selectedSupplierId) return []
     return supplierOrders
       .filter((o) => o.supplierId === selectedSupplierId)
       .sort((a, b) => {
+        // 1. If they have a custom drag-and-drop order, use it
         if ((a.sortOrder || 0) !== 0 || (b.sortOrder || 0) !== 0) {
           return (a.sortOrder || 0) - (b.sortOrder || 0);
         }
-        return a.date.localeCompare(b.date) || (a.id || 0) - (b.id || 0);
+        // 2. Otherwise, sort NEWEST FIRST (Descending Date & ID)
+        return b.date.localeCompare(a.date) || (b.id || 0) - (a.id || 0);
       })
   }, [supplierOrders, selectedSupplierId])
 
