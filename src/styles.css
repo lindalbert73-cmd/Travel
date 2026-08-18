@@ -456,11 +456,12 @@ body {
 }
 
 /* Table */
-/* .table-card {
+.table-card {
   overflow: hidden;
-} */
+}
 
 .table-wrapper {
+  max-height: 420px;
   overflow: auto;
   border-radius: 0 0 var(--radius-xl) var(--radius-xl);
 }
