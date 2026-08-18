@@ -39,12 +39,16 @@ body {
 /* Layout */
 .app-shell {
   display: flex;
-  min-height: 100vh;
+  height: 100vh; /* Changed from min-height to a strict height */
+  width: 100vw;  /* Ensure it doesn't overflow horizontally */
+  overflow: hidden;
 }
 
 /* Sidebar */
 .sidebar {
   width: 230px;
+  height: 100%; /* Lock height to the shell */
+  overflow-y: auto; /* Add this so the sidebar can scroll if menu items get too long */
   background: #ffffff;
   border-right: 1px solid #e5e7eb;
   box-shadow: 4px 0 14px rgba(148, 163, 184, 0.25);
@@ -154,8 +158,10 @@ body {
 /* Main area */
 .main-area {
   flex: 1;
+  height: 100%; /* Lock height to the shell */
+  overflow-y: auto; /* THIS is what creates your page scrollbar */
+  overflow-x: hidden; /* Prevent horizontal page jumping */
   padding: 20px 20px 24px;
-  overflow: auto;
 }
 
 .page-header {
@@ -471,7 +477,6 @@ body {
 /* 2. Ensure your main container allows page scrolling */
 #view-supplier-detail {
   height: auto;
-  min-height: 100vh; 
   overflow-y: visible; /* Let the browser window handle the scroll */
 }
 
