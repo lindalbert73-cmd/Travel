@@ -460,10 +460,19 @@ body {
   overflow: hidden;
 }
 
+/* 1. Release the table wrapper's vertical constraints */
 .table-wrapper {
-  max-height: 420px;
-  overflow: auto;
-  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+  overflow-x: auto;    /* Keep horizontal scrolling for small screens */
+  overflow-y: visible; /* Disable internal vertical scrolling */
+  max-height: none;    /* Remove any maximum height limits */
+  height: auto;        /* Allow it to grow with the rows */
+}
+
+/* 2. Ensure your main container allows page scrolling */
+#view-supplier-detail {
+  height: auto;
+  min-height: 100vh; 
+  overflow-y: visible; /* Let the browser window handle the scroll */
 }
 
 table {
