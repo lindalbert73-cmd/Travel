@@ -753,6 +753,7 @@ function App() {
           amountDebit: Number(row.amount_debit ?? 0),
           cashIn: Number(row.cash_in ?? 0),
           cashOut: Number(row.cash_out ?? 0),
+          sortOrder: row.sort_order || 0,
         }))
 
         setSuppliers(mappedSuppliers)
@@ -3255,8 +3256,53 @@ function App() {
     if (!selectedSupplierId) return []
     return supplierOrders
       .filter((o) => o.supplierId === selectedSupplierId)
-      .sort((a, b) => a.date.localeCompare(b.date) || (a.id || 0) - (b.id || 0))
+      .sort((a, b) => {
+        if ((a.sortOrder || 0) !== 0 || (b.sortOrder || 0) !== 0) {
+          return (a.sortOrder || 0) - (b.sortOrder || 0);
+        }
+        return a.date.localeCompare(b.date) || (a.id || 0) - (b.id || 0);
+      })
   }, [supplierOrders, selectedSupplierId])
+
+  async function handleReorderSupplierOrders(orderedIds) {
+    if (!user?.id || !selectedSupplierId) return;
+
+    // 1. Backup the old state in case the database fails
+    const previousOrders = [...supplierOrders];
+
+    // 2. Optimistic UI Update (Update screen instantly so it feels fast)
+    setSupplierOrders((prev) => 
+      prev.map((o) => {
+        if (o.supplierId === selectedSupplierId) {
+          const newIndex = orderedIds.indexOf(String(o.id));
+          if (newIndex !== -1) {
+            return { ...o, sortOrder: newIndex + 1 };
+          }
+        }
+        return o;
+      })
+    );
+
+    // 3. Prepare data for Supabase RPC
+    const payload = orderedIds.map((itemId, index) => ({
+      id: String(itemId),
+      sortOrder: index + 1,
+    }));
+
+    try {
+      // 4. Send the new order to the database
+      const { error } = await supabase.rpc('update_supplier_order_sort', {
+        sort_items: payload
+      });
+
+      if (error) throw error;
+    } catch (err) {
+      console.error('Failed to reorder orders in Supabase', err);
+      alert('Failed to save the new order. Reverting changes.');
+      // 5. Rollback to original order if it failed
+      setSupplierOrders(previousOrders);
+    }
+  }
 
   const filteredSupplierOrders = useMemo(() => {
     let list = [...supplierOrdersForSelected]
@@ -3929,6 +3975,7 @@ function App() {
               deleteSupplierOrder={deleteSupplierOrder}
               openEditSupplierOrder={openEditSupplierOrder}
               openHistory={openHistory}
+              onReorder={handleReorderSupplierOrders}
             />
           )}
 
