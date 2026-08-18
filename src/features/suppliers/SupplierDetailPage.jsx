@@ -24,8 +24,10 @@ function SupplierDetailPage({
   deleteSupplierOrder,
   openEditSupplierOrder,
   openHistory,
-  onReorder,
+  onReorder, // 👈 ADDED onReorder PROP HERE
 }) {
+
+  // 👇 ADDED NATIVE DRAG AND DROP STATE & HANDLERS
   const [draggedId, setDraggedId] = useState(null)
   const [dragOverId, setDragOverId] = useState(null)
 
@@ -35,7 +37,7 @@ function SupplierDetailPage({
   }
 
   const handleDragOver = (e, id) => {
-    e.preventDefault() 
+    e.preventDefault() // Necessary to allow dropping
     if (dragOverId !== id) {
       setDragOverId(id)
     }
@@ -49,25 +51,20 @@ function SupplierDetailPage({
       return
     }
 
-    // 1. Sort the raw array to match the visual "Newest First" order on the screen
-    const visualOrder = [...filteredSupplierOrders].sort((a, b) => {
-      if ((a.sortOrder || 0) !== 0 || (b.sortOrder || 0) !== 0) {
-        return (a.sortOrder || 0) - (b.sortOrder || 0)
-      }
-      return b.date.localeCompare(a.date) || (b.id || 0) - (a.id || 0)
-    })
-
-    const visualIds = visualOrder.map((o) => String(o.id))
-    const draggedIndex = visualIds.indexOf(String(draggedId))
-    const targetIndex = visualIds.indexOf(String(targetId))
+    // Find current indices
+    const currentIds = filteredSupplierOrders.map((o) => String(o.id))
+    const draggedIndex = currentIds.indexOf(String(draggedId))
+    const targetIndex = currentIds.indexOf(String(targetId))
 
     if (draggedIndex !== -1 && targetIndex !== -1) {
-      const newVisualIds = [...visualIds]
-      const [movedItem] = newVisualIds.splice(draggedIndex, 1)
-      newVisualIds.splice(targetIndex, 0, movedItem)
+      // Create new array with shifted item
+      const newIds = [...currentIds]
+      const [movedItem] = newIds.splice(draggedIndex, 1)
+      newIds.splice(targetIndex, 0, movedItem)
 
+      // Send back to App.jsx
       if (onReorder) {
-        onReorder(newVisualIds)
+        onReorder(newIds)
       }
     }
 
@@ -407,7 +404,7 @@ function SupplierDetailPage({
                   <table>
                     <thead>
                       <tr>
-                        <th style={{ width: '30px' }}></th>
+                        <th style={{ width: '30px' }}></th> {/* 👈 BLANK HEADER FOR GRIP */}
                         <th>Date</th>
                         <th>Customer</th>
                         <th>Product</th>
@@ -419,35 +416,18 @@ function SupplierDetailPage({
                     </thead>
                     <tbody>
                       {(() => {
-                        // 1. Sort Oldest -> Newest to calculate math
-                        const chronologicalOrders = [...filteredSupplierOrders].sort((a, b) => {
-                          return a.date.localeCompare(b.date) || (a.id || 0) - (b.id || 0)
-                        });
-
-                        // 2. Calculate balance forward
-                        let runningBalance = 0;
-                        const ordersWithBalance = chronologicalOrders.map((o) => {
-                          const debit = Number(o.amountDebit) || 0;
-                          const credit = Number(o.amountCredit) || 0;
-                          runningBalance += credit - debit;
-                          return { ...o, debit, credit, balanceRow: runningBalance };
-                        });
-
-                        // 3. Sort for Display (Newest -> Oldest, OR by Drag-and-Drop)
-                        const displayOrders = ordersWithBalance.sort((a, b) => {
-                          if ((a.sortOrder || 0) !== 0 || (b.sortOrder || 0) !== 0) {
-                            return (a.sortOrder || 0) - (b.sortOrder || 0)
-                          }
-                          return b.date.localeCompare(a.date) || (b.id || 0) - (a.id || 0)
-                        });
-
-                        return displayOrders.map((o) => {
-                          const isNil = o.balanceRow === 0
-                          const display = isNil ? 'Nil' : formatMoney(o.balanceRow)
+                        let runningBalance = 0
+                        return filteredSupplierOrders.map((o) => {
+                          const debit = Number(o.amountDebit) || 0
+                          const credit = Number(o.amountCredit) || 0
+                          runningBalance += credit - debit
+                          const balanceRow = runningBalance
+                          const isNil = balanceRow === 0
+                          const display = isNil ? 'Nil' : formatMoney(balanceRow)
                           const className =
-                            o.balanceRow > 0
+                            balanceRow > 0
                               ? 'tag tag-unpaid'
-                              : o.balanceRow < 0
+                              : balanceRow < 0
                               ? 'tag tag-overpaid'
                               : 'badge-nil'
 
@@ -459,6 +439,7 @@ function SupplierDetailPage({
                               onDragOver={(e) => handleDragOver(e, o.id)}
                               onDrop={(e) => handleDrop(e, o.id)}
                               onDragEnd={handleDragEnd}
+                              // 👈 Visual styling so the user knows they are dragging
                               style={{
                                 cursor: 'grab',
                                 opacity: draggedId === o.id ? 0.4 : 1,
@@ -466,13 +447,14 @@ function SupplierDetailPage({
                               }}
                             >
                               <td style={{ color: '#9ca3af', cursor: 'grab' }}>
+                                {/* 👈 GRIP ICON */}
                                 <i className="fa-solid fa-grip-vertical"></i> 
                               </td>
                               <td>{formatDisplayDate(o.date)}</td>
                               <td>{o.customerName}</td>
                               <td>{o.product || '-'}</td>
-                              <td>{formatMoney(o.debit)}</td>
-                              <td>{formatMoney(o.credit)}</td>
+                              <td>{formatMoney(debit)}</td>
+                              <td>{formatMoney(credit)}</td>
                               <td>
                                 <span className={className}>{display}</span>
                               </td>
